@@ -1,8 +1,6 @@
 use pdfium_render::prelude::*;
 use std::fmt;
 
-// ─── Data Types ────────────────────────────────────────────────
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum TextAlign {
     Left,
@@ -17,6 +15,9 @@ pub enum BlockKind {
     Subtitle,
     Epigraph,
     Attribution,
+    // TODO: I will work on splitting this into ParagraphStart and MidParagraph
+    // The current implementation is not correctly tracking if it's a new paragraph,
+    // The should_merge function is combining different paragraphs and not distinguishing between fragments piece marked as Paragraph
     Paragraph,
     Heading,
     ListItem,
@@ -260,7 +261,6 @@ pub fn extract_fragments(
     (fragments, underlines)
 }
 
-// ─── Line Grouping ─────────────────────────────────────────────
 
 /// Group fragments into lines based on vertical proximity.
 /// Fragments whose vertical ranges overlap within a threshold are on the same line.
@@ -329,7 +329,6 @@ pub fn group_into_lines(mut fragments: Vec<TextFragment>) -> Vec<TextLine> {
     lines
 }
 
-// ─── Block Classification ──────────────────────────────────────
 
 /// Classify a line into a block kind, based on its style properties.
 fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
@@ -395,7 +394,6 @@ fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
     BlockKind::Paragraph
 }
 
-// ─── Block Merging ─────────────────────────────────────────────
 
 /// Merge classified lines into content blocks. Consecutive lines with the
 /// same classification and compatible styles are joined into a single block.
@@ -413,7 +411,7 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
             continue;
         }
 
-        // Track whether we're in the TOC section
+        // Track whether it is in the TOC section
         if text.contains("Table of Contents") {
             in_toc = true;
         }
@@ -458,7 +456,7 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
             continue;
         }
 
-        // Determine if we should merge with the previous block
+        // Determine if the current line should merge with the previous block
         let should_merge = if let Some(prev) = blocks.last() {
             match (&prev.kind, &kind) {
                 // Merge consecutive paragraph lines
@@ -490,7 +488,6 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
     blocks
 }
 
-// ─── Top-Level Reconstruction ──────────────────────────────────
 
 /// Reconstruct a single page into semantic content blocks.
 pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
