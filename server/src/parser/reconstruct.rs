@@ -15,9 +15,6 @@ pub enum BlockKind {
     Subtitle,
     Epigraph,
     Attribution,
-    // TODO: I will work on splitting this into ParagraphStart and MidParagraph
-    // The current implementation is not correctly tracking if it's a new paragraph,
-    // The should_merge function is combining different paragraphs and not distinguishing between fragments piece marked as Paragraph
     Paragraph,
     Heading,
     ListItem,
@@ -397,6 +394,9 @@ fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
 
 /// Merge classified lines into content blocks. Consecutive lines with the
 /// same classification and compatible styles are joined into a single block.
+/// Uses vertical gap detection to identify paragraph boundaries: if the gap
+/// between two consecutive lines exceeds normal line spacing (1.5× font size),
+/// they belong to separate paragraphs.
 pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
     if lines.is_empty() {
         return Vec::new();
@@ -404,6 +404,9 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
 
     let mut blocks: Vec<ContentBlock> = Vec::new();
     let mut in_toc = false;
+    // Track the bottom coordinate of the previous line so we can measure
+    // vertical gaps between consecutive lines.
+    let mut prev_line_bottom: Option<f32> = None;
 
     for line in &lines {
         let text = line.merged_text();
@@ -456,13 +459,29 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
             continue;
         }
 
+        // Measure the vertical gap between this line and the previous one.
+        // In PDF coordinates, Y increases upward, so the previous line's
+        // bottom is ABOVE the current line's top.
+        // gap = prev_bottom - current_top  (positive = normal spacing)
+        // Within a paragraph, gap ≈ font_size × 1.2 (normal leading).
+        // Between paragraphs, gap is noticeably larger.
+        let has_paragraph_break = if let Some(prev_bottom) = prev_line_bottom {
+            let gap = prev_bottom - line.top;
+            let font_size = line.font_size();
+            // A gap larger than 1.5× the font size indicates a paragraph break.
+            // Normal line spacing is ~1.2× font size, so 1.3× gives comfortable margin.
+            gap > font_size * 1.3
+        } else {
+            false
+        };
+
         // Determine if the current line should merge with the previous block
         let should_merge = if let Some(prev) = blocks.last() {
             match (&prev.kind, &kind) {
-                // Merge consecutive paragraph lines
-                (BlockKind::Paragraph, BlockKind::Paragraph) => true,
-                // Merge consecutive epigraph lines
-                (BlockKind::Epigraph, BlockKind::Epigraph) => true,
+                // Merge consecutive paragraph lines only if there's no paragraph break
+                (BlockKind::Paragraph, BlockKind::Paragraph) => !has_paragraph_break,
+                // Merge consecutive epigraph lines only if there's no paragraph break
+                (BlockKind::Epigraph, BlockKind::Epigraph) => !has_paragraph_break,
                 _ => false,
             }
         } else {
@@ -483,6 +502,9 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
                 is_underlined: line.is_underlined(),
             });
         }
+
+        // Update the previous line's bottom for the next iteration
+        prev_line_bottom = Some(line.bottom);
     }
 
     blocks
