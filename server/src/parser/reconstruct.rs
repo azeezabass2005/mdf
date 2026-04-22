@@ -395,7 +395,7 @@ fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
 /// Merge classified lines into content blocks. Consecutive lines with the
 /// same classification and compatible styles are joined into a single block.
 /// Uses vertical gap detection to identify paragraph boundaries: if the gap
-/// between two consecutive lines exceeds normal line spacing (1.5× font size),
+/// between two consecutive lines exceeds normal line spacing (1.3× font size),
 /// they belong to separate paragraphs.
 pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
     if lines.is_empty() {
@@ -468,7 +468,7 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
         let has_paragraph_break = if let Some(prev_bottom) = prev_line_bottom {
             let gap = prev_bottom - line.top;
             let font_size = line.font_size();
-            // A gap larger than 1.5× the font size indicates a paragraph break.
+            // A gap larger than 1.3× the font size indicates a paragraph break.
             // Normal line spacing is ~1.2× font size, so 1.3× gives comfortable margin.
             gap > font_size * 1.3
         } else {
