@@ -1,28 +1,38 @@
+use std::sync::OnceLock;
+
 use pdfium_render::prelude::*;
+use reconstruct::reconstruct_page;
+use crate::pdf_inference::reconstruct::ContentBlock;
 
 pub mod reconstruct;
 
-use reconstruct::reconstruct_page;
+static PDFIUM_BINDINGS: OnceLock<Pdfium> = OnceLock::new();
 
-pub fn extract_structured_text() -> Result<(), PdfiumError> {
-    let bindings = Pdfium::bind_to_library(
-        Pdfium::pdfium_platform_library_name_at_path("./")
-    )?;
+pub fn init_pdfium() -> &'static Pdfium {
+    PDFIUM_BINDINGS.get_or_init(|| {
+        Pdfium::new(
+            Pdfium::bind_to_library(
+                Pdfium::pdfium_platform_library_name_at_path("./")
+            ).expect("Failed to initialize PDFium bindings")
+        )
+    })
+}
 
-    let pdfium = Pdfium::new(bindings);
-    let document = pdfium.load_pdf_from_file("test/short_pdf.pdf", None)?;
+pub fn infer_pdf_semantics(pdf_bytes: &[u8]) -> Result<Vec<Vec<ContentBlock>>, PdfiumError> {
+    let pdfium = init_pdfium();
+    let document = pdfium.load_pdf_from_byte_slice(pdf_bytes, None)?;
+    let mut result: Vec<Vec<ContentBlock>> = Vec::new();
 
-    for (page_index, page) in document.pages().iter().enumerate() {
-        println!("\n===== Page {} =====\n", page_index + 1);
-
+    for (_page_index, page) in document.pages().iter().enumerate() {
         let blocks = reconstruct_page(&page);
+        result.push(blocks);
 
-        for block in &blocks {
-            println!("{}", block);
-        }
+        // for block in &blocks {
+            // println!("{}", block);
+        // }
     }
 
-    Ok(())
+    Ok(result)
 }
 
 pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {

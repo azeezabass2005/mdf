@@ -1,4 +1,5 @@
 use pdfium_render::prelude::*;
+use serde::{Serialize, Deserialize};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -8,7 +9,7 @@ pub enum TextAlign {
     Right,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BlockKind {
     PageNumber,
     Title,
@@ -147,7 +148,7 @@ impl TextLine {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ContentBlock {
     pub kind: BlockKind,
     pub text: String,
