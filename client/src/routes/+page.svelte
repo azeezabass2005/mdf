@@ -1,6 +1,11 @@
 <script lang="ts">
+  import { goto } from '$app/navigation';
+  import { saveDocument } from '$lib/db';
+
   let isDragging = $state(false);
   let selectedFile = $state<File | null>(null);
+  let isUploading = $state(false);
+  let uploadError = $state<string | null>(null);
 
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
@@ -24,6 +29,12 @@
     }
   }
 
+  let fileInput: HTMLInputElement | undefined = $state();
+
+  function triggerFileInput() {
+    fileInput?.click();
+  }
+
   function handleFileInput(e: Event) {
     const input = e.target as HTMLInputElement;
     if (input.files && input.files.length > 0) {
@@ -43,6 +54,38 @@
       element.scrollIntoView({ behavior: 'smooth' });
     }
   }
+
+  async function handleUpload() {
+    if (!selectedFile) return;
+    
+    isUploading = true;
+    uploadError = null;
+
+    try {
+      const formData = new FormData();
+      formData.append('file', selectedFile);
+
+      const response = await fetch('http://localhost:4000/infer_semantics', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        throw new Error(`Upload failed: ${response.statusText}`);
+      }
+
+      const semanticData = await response.json();
+      
+      const docId = await saveDocument(selectedFile.name, selectedFile.size, semanticData);
+      
+      await goto(`/reader/${docId}`);
+      
+    } catch (err: any) {
+      console.error("Upload error:", err);
+      uploadError = err.message || "Failed to process document";
+      isUploading = false;
+    }
+  }
 </script>
 
 <div class="relative min-h-screen bg-[#050505] text-[#f4f4f5] selection:bg-[#f4f4f5] selection:text-[#050505] font-sans overflow-x-hidden antialiased">
@@ -55,8 +98,9 @@
       </div>
     </div>
     <div class="flex items-center gap-6 md:gap-8">
-      <div class="hidden md:flex gap-6 text-xs uppercase tracking-[0.3em] font-bold text-white/50">
-        <a href="#features" onclick={(e) => scrollToSection(e, 'features')} class="hover:text-white transition-colors">Features</a>
+      <div class="flex gap-5 md:gap-6 text-[10px] md:text-xs uppercase tracking-[0.3em] font-bold text-white/50">
+        <a href="/library" class="hover:text-white transition-colors">Library</a>
+        <a href="#features" onclick={(e) => scrollToSection(e, 'features')} class="hover:text-white transition-colors hidden md:block">Features</a>
       </div>
       
       <a href="https://github.com/azeezabass2005/mdf" target="_blank" class="text-white/50 hover:text-white transition-colors flex items-center gap-2">
@@ -66,7 +110,7 @@
          </svg>
       </a>
 
-      <button onclick={() => window.scrollTo({top: 0, behavior: 'smooth'})} class="relative overflow-hidden group border border-white/20 rounded-full px-6 py-2 hidden sm:block">
+      <button onclick={triggerFileInput} class="relative overflow-hidden group border border-white/20 rounded-full px-6 py-2 hidden sm:block cursor-pointer">
         <span class="relative z-10 text-xs tracking-widest uppercase font-bold group-hover:text-black transition-colors duration-500">Upload</span>
         <div class="absolute inset-0 bg-white translate-y-full group-hover:translate-y-0 transition-transform duration-500 ease-[cubic-bezier(0.19,1,0.22,1)]"></div>
       </button>
@@ -121,8 +165,16 @@
               <span class="text-sm font-serif italic text-white/50 mb-12 block">
                 [ {(selectedFile.size / 1024 / 1024).toFixed(3)} MB ]
               </span>
-              <button class="relative cursor-pointer w-full overflow-hidden bg-white text-black py-5 px-6 group/btn">
-                 <span class="relative z-10 uppercase tracking-[0.2em] text-xs font-bold transition-all group-hover/btn:text-white">Start Reading</span>
+              {#if uploadError}
+                 <p class="text-red-500 text-xs tracking-widest uppercase font-bold mb-4">{uploadError}</p>
+              {/if}
+              <button 
+                class="relative cursor-pointer w-full overflow-hidden bg-white text-black py-5 px-6 group/btn {isUploading ? 'opacity-50 pointer-events-none' : ''}"
+                onclick={handleUpload}
+              >
+                 <span class="relative z-10 uppercase tracking-[0.2em] text-xs font-bold transition-all group-hover/btn:text-white">
+                    {isUploading ? 'Processing Document...' : 'Start Reading'}
+                 </span>
                  <div class="absolute bottom-0 left-0 w-full h-0 bg-black transition-all duration-500 ease-[cubic-bezier(0.19,1,0.22,1)] group-hover/btn:h-full"></div>
               </button>
             </div>
@@ -139,15 +191,18 @@
                </span>
                <div class="relative inline-block mt-4 overflow-hidden group/btn">
                   <div class="absolute left-0 bottom-0 w-full h-px bg-white scale-x-0 group-hover/btn:scale-x-100 transition-transform origin-left duration-500"></div>
-                  <span class="relative uppercase tracking-widest text-xs font-bold pb-2 cursor-pointer transition-colors hover:text-white">
+                  <!-- svelte-ignore a11y_click_events_have_key_events -->
+                  <!-- svelte-ignore a11y_no_static_element_interactions -->
+                  <span class="relative uppercase tracking-widest text-xs font-bold pb-2 cursor-pointer transition-colors hover:text-white" onclick={triggerFileInput}>
                     Select via Dialog
-                    <input 
-                      type="file" 
-                      accept="application/pdf"
-                      class="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      onchange={handleFileInput}
-                    />
                   </span>
+                  <input 
+                    bind:this={fileInput}
+                    type="file" 
+                    accept="application/pdf"
+                    class="hidden"
+                    onchange={handleFileInput}
+                  />
                </div>
             </div>
           {/if}
