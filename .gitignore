@@ -6,7 +6,7 @@ node_modules
 .netlify
 .wrangler
 client/.svelte-kit
-/build
+client/build
 
 # OS
 .DS_Store

@@ -12,10 +12,6 @@ pub mod api;
 async fn main() {
     println!("MDF - The Maldives for PDFs");
 
-    // let _res = pdf_inference::extract_pdf_text_with_formatting();
-    // Note the line below will be removed later, it's just to see what the group into lines is giving
-    let _res = pdf_inference::infer_pdf_semantics(&[]);
-
     let cors = CorsLayer::new()
         .allow_methods([Method::POST, Method::GET, Method::PATCH])
         .allow_origin([

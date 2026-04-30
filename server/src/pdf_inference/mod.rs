@@ -20,7 +20,6 @@ pub fn init_pdfium() -> &'static Pdfium {
 
 pub fn infer_pdf_semantics(pdf_bytes: &[u8]) -> Result<Vec<Vec<ContentBlock>>, PdfiumError> {
     let pdfium = init_pdfium();
-    // let document = pdfium.load_pdf_from_file("test/qemu_long_pdf.pdf", None)?;
     let document = pdfium.load_pdf_from_byte_slice(pdf_bytes, None)?;
     let mut result: Vec<Vec<ContentBlock>> = Vec::new();
 
