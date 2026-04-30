@@ -52,7 +52,6 @@ pub struct TextFragment {
     pub top: f32,
     pub right: f32,
     pub bottom: f32,
-    pub alignment: TextAlign,
 }
 
 #[derive(Debug, Clone)]
@@ -60,6 +59,7 @@ pub struct TextLine {
     pub fragments: Vec<TextFragment>,
     pub top: f32,
     pub bottom: f32,
+    pub alignment: TextAlign,
 }
 
 impl TextLine {
@@ -67,16 +67,28 @@ impl TextLine {
     /// fragments that aren't already separated.
     pub fn merged_text(&self) -> String {
         let mut result = String::new();
-        for (i, frag) in self.fragments.iter().enumerate() {
-            if i > 0 {
-                // Add space between fragments if the previous doesn't end with
-                // a space and the current doesn't start with one.
-                let needs_space = !result.ends_with(' ') && !frag.text.starts_with(' ');
+        let mut prev_frag: Option<&TextFragment> = None;
+
+        for frag in self.fragments.iter() {
+            if frag.text.is_empty() {
+                continue;
+            }
+
+            if let Some(prev) = prev_frag {
+                // Calculate horizontal gap between current fragment's left and previous fragment's right
+                let gap = frag.left - prev.right;
+
+                let threshold = prev.font_size.max(frag.font_size) * 0.3;
+
+                // Add space if there is a wide enough gap AND I don't already have one
+                let needs_space = gap > threshold && !result.ends_with(' ') && !frag.text.starts_with(' ');
                 if needs_space {
                     result.push(' ');
                 }
             }
+            
             result.push_str(&frag.text);
+            prev_frag = Some(frag);
         }
         result.trim().to_string()
     }
@@ -112,13 +124,10 @@ impl TextLine {
         self.fragments.iter().any(|f| f.is_underlined)
     }
 
-    /// Dominant alignment (first non-empty fragment).
+    /// Alignment of this line (computed from the line's combined bounds
+    /// against page width, not from any single fragment).
     pub fn alignment(&self) -> TextAlign {
-        self.fragments
-            .iter()
-            .find(|f| !f.text.trim().is_empty())
-            .map(|f| f.alignment.clone())
-            .unwrap_or(TextAlign::Left)
+        self.alignment.clone()
     }
 
     /// Left edge of the leftmost fragment.
@@ -169,8 +178,6 @@ impl fmt::Display for ContentBlock {
 pub fn extract_fragments(
     page: &PdfPage,
 ) -> (Vec<TextFragment>, Vec<(f32, f32, f32, f32)>) {
-    let page_width = page.width().value;
-
     // Collection of potential underline paths
     let mut underlines: Vec<(f32, f32, f32, f32)> = Vec::new();
     for object in page.objects().iter() {
@@ -221,16 +228,6 @@ pub fn extract_fragments(
                 let top = bounds.top().value;
                 let right = bounds.right().value;
                 let bottom = bounds.bottom().value;
-                let width = bounds.width().value;
-
-                // Determine alignment
-                let center_margin = (page_width - width) / 2.0;
-                let left_diff = (center_margin - left).abs();
-                let alignment = if left_diff <= 3.0 {
-                    TextAlign::Center
-                } else {
-                    TextAlign::Left
-                };
 
                 // Check underline
                 let is_underlined = underlines.iter().any(|(ul, ut, ur, _ub)| {
@@ -250,7 +247,6 @@ pub fn extract_fragments(
                     top,
                     right,
                     bottom,
-                    alignment,
                 });
             }
         }
@@ -260,71 +256,168 @@ pub fn extract_fragments(
 }
 
 
-/// Group fragments into lines based on vertical proximity.
-/// Fragments whose vertical ranges overlap within a threshold are on the same line.
-pub fn group_into_lines(mut fragments: Vec<TextFragment>) -> Vec<TextLine> {
+/// Two fragments can fold into one if every style attribute matches.
+/// Caller is responsible for ensuring they're already on the same line.
+fn can_merge(prev: &TextFragment, next: &TextFragment) -> bool {
+    prev.font_name == next.font_name
+        && (prev.font_size - next.font_size).abs() < 0.5
+        && prev.is_bold == next.is_bold
+        && prev.is_italic == next.is_italic
+        && prev.is_underlined == next.is_underlined
+}
+
+
+/// Collapse adjacent fragments on a line that share the same style into
+/// single fragments. PDFs that use subsetted fonts with per-glyph TJ
+/// positioning emit one text object per glyph; this folds those back into
+/// word/run-level fragments. Inserts a space when the horizontal gap is
+/// large enough to represent a real word boundary.
+///
+/// Expects fragments already sorted left-to-right.
+fn merge_line_fragments(fragments: Vec<TextFragment>) -> Vec<TextFragment> {
+    let mut out: Vec<TextFragment> = Vec::with_capacity(fragments.len());
+    for frag in fragments {
+        let merged = match out.last_mut() {
+            Some(prev) if can_merge(prev, &frag) => {
+                let gap = frag.left - prev.right;
+                let space_threshold = prev.font_size.max(frag.font_size) * 0.3;
+                if gap > space_threshold
+                    && !prev.text.ends_with(' ')
+                    && !frag.text.starts_with(' ')
+                {
+                    prev.text.push(' ');
+                }
+                prev.text.push_str(&frag.text);
+                prev.right = frag.right;
+                if frag.top > prev.top {
+                    prev.top = frag.top;
+                }
+                if frag.bottom < prev.bottom {
+                    prev.bottom = frag.bottom;
+                }
+                true
+            }
+            _ => false,
+        };
+        if !merged {
+            out.push(frag);
+        }
+    }
+    out
+}
+
+
+/// Compute alignment for a finished line. Reject Center when there's a
+/// big internal gap — a contiguous span with symmetric outer margins is
+/// centered; a span with an empty middle is multi-column.
+fn line_alignment(fragments: &[TextFragment], page_width: f32) -> TextAlign {
+    if fragments.is_empty() {
+        return TextAlign::Left;
+    }
+    let leftmost = fragments.iter().map(|f| f.left).fold(f32::MAX, f32::min);
+    let rightmost = fragments.iter().map(|f| f.right).fold(f32::MIN, f32::max);
+    let line_width = rightmost - leftmost;
+    let center_margin = (page_width - line_width) / 2.0;
+    let left_diff = (center_margin - leftmost).abs();
+
+    let max_internal_gap = fragments
+        .windows(2)
+        .map(|pair| pair[1].left - pair[0].right)
+        .fold(0.0_f32, f32::max);
+    let has_column_gap = max_internal_gap > page_width * 0.1;
+
+    if left_diff <= 3.0 && !has_column_gap {
+        TextAlign::Center
+    } else {
+        TextAlign::Left
+    }
+}
+
+
+/// In-progress line cluster used during fragment grouping.
+struct LineCluster {
+    fragments: Vec<TextFragment>,
+    max_font_size: f32,
+    top: f32,
+    bottom: f32,
+}
+
+impl LineCluster {
+    fn new(frag: TextFragment) -> Self {
+        Self {
+            max_font_size: frag.font_size,
+            top: frag.top,
+            bottom: frag.bottom,
+            fragments: vec![frag],
+        }
+    }
+
+    /// Same-line test: vertical bbox overlap, with a font-size ratio cap
+    /// to keep different-size text in separate lines when their bands
+    /// happen to overlap.
+    fn accepts(&self, frag: &TextFragment) -> bool {
+        let overlap = self.top.min(frag.top) - self.bottom.max(frag.bottom);
+        let min_fs = self.max_font_size.min(frag.font_size).max(0.1);
+        let max_fs = self.max_font_size.max(frag.font_size);
+        overlap > 0.5 && max_fs / min_fs < 1.5
+    }
+
+    fn absorb(&mut self, frag: TextFragment) {
+        if frag.font_size > self.max_font_size {
+            self.max_font_size = frag.font_size;
+        }
+        if frag.top > self.top {
+            self.top = frag.top;
+        }
+        if frag.bottom < self.bottom {
+            self.bottom = frag.bottom;
+        }
+        self.fragments.push(frag);
+    }
+}
+
+/// Group fragments into lines, then merge adjacent same-style fragments
+/// within each line.
+///
+/// Each fragment is assigned to any matching cluster in the active set,
+/// not just the most recent. A single-active-line walk fails when
+/// fragments from different lines interleave in sort order — the loop
+/// would keep closing and reopening lines.
+pub fn group_into_lines(mut fragments: Vec<TextFragment>, page_width: f32) -> Vec<TextLine> {
     if fragments.is_empty() {
         return Vec::new();
     }
 
-    // Sort by descending top (page coordinates: top of page = high value).
     fragments.sort_by(|a, b| b.top.partial_cmp(&a.top).unwrap_or(std::cmp::Ordering::Equal));
 
-    let mut lines: Vec<TextLine> = Vec::new();
-    let mut current_fragments: Vec<TextFragment> = vec![fragments[0].clone()];
-    let mut current_top = fragments[0].top;
-    let mut current_bottom = fragments[0].bottom;
+    let mut clusters: Vec<LineCluster> = Vec::new();
 
-    let vertical_threshold = 3.0; // points
-
-    for frag in fragments.iter().skip(1) {
-        // Check if this fragment belongs on the current line by comparing
-        // the fragment's vertical midpoint against the current line's range.
-        // This is stricter than edge-based overlap and prevents items on
-        // adjacent lines from merging when their edges barely touch.
-        let frag_mid = (frag.top + frag.bottom) / 2.0;
-        let line_mid = (current_top + current_bottom) / 2.0;
-        let on_same_line = (frag_mid - line_mid).abs() <= vertical_threshold;
-
-        if on_same_line {
-            current_fragments.push(frag.clone());
-            // Expand the vertical bounds of the line
-            if frag.top > current_top {
-                current_top = frag.top;
-            }
-            if frag.bottom < current_bottom {
-                current_bottom = frag.bottom;
-            }
-        } else {
-            // Finish the current line
-            current_fragments.sort_by(|a, b| {
-                a.left.partial_cmp(&b.left).unwrap_or(std::cmp::Ordering::Equal)
-            });
-            lines.push(TextLine {
-                fragments: current_fragments,
-                top: current_top,
-                bottom: current_bottom,
-            });
-            // Start a new line
-            current_fragments = vec![frag.clone()];
-            current_top = frag.top;
-            current_bottom = frag.bottom;
+    for frag in fragments {
+        match clusters.iter().position(|c| c.accepts(&frag)) {
+            Some(idx) => clusters[idx].absorb(frag),
+            None => clusters.push(LineCluster::new(frag)),
         }
     }
 
-    // Don't forget the last line
-    if !current_fragments.is_empty() {
-        current_fragments.sort_by(|a, b| {
-            a.left.partial_cmp(&b.left).unwrap_or(std::cmp::Ordering::Equal)
-        });
-        lines.push(TextLine {
-            fragments: current_fragments,
-            top: current_top,
-            bottom: current_bottom,
-        });
-    }
+    clusters.sort_by(|a, b| b.top.partial_cmp(&a.top).unwrap_or(std::cmp::Ordering::Equal));
 
-    lines
+    clusters
+        .into_iter()
+        .map(|c| {
+            let mut frags = c.fragments;
+            frags.sort_by(|a, b| {
+                a.left.partial_cmp(&b.left).unwrap_or(std::cmp::Ordering::Equal)
+            });
+            let merged = merge_line_fragments(frags);
+            let alignment = line_alignment(&merged, page_width);
+            TextLine {
+                fragments: merged,
+                top: c.top,
+                bottom: c.bottom,
+                alignment,
+            }
+        })
+        .collect()
 }
 
 
@@ -405,7 +498,7 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
 
     let mut blocks: Vec<ContentBlock> = Vec::new();
     let mut in_toc = false;
-    // Track the bottom coordinate of the previous line so we can measure
+    // Track the bottom coordinate of the previous line so I can measure
     // vertical gaps between consecutive lines.
     let mut prev_line_bottom: Option<f32> = None;
 
@@ -515,6 +608,6 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
 /// Reconstruct a single page into semantic content blocks.
 pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
     let (fragments, _underlines) = extract_fragments(page);
-    let lines = group_into_lines(fragments);
+    let lines = group_into_lines(fragments, page.width().value);
     merge_into_blocks(lines)
 }

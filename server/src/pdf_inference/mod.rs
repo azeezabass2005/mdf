@@ -20,16 +20,17 @@ pub fn init_pdfium() -> &'static Pdfium {
 
 pub fn infer_pdf_semantics(pdf_bytes: &[u8]) -> Result<Vec<Vec<ContentBlock>>, PdfiumError> {
     let pdfium = init_pdfium();
+    // let document = pdfium.load_pdf_from_file("test/qemu_long_pdf.pdf", None)?;
     let document = pdfium.load_pdf_from_byte_slice(pdf_bytes, None)?;
     let mut result: Vec<Vec<ContentBlock>> = Vec::new();
 
     for (_page_index, page) in document.pages().iter().enumerate() {
         let blocks = reconstruct_page(&page);
-        result.push(blocks);
+        result.push(blocks.clone());
 
-        // for block in &blocks {
-            // println!("{}", block);
-        // }
+        for block in &blocks {
+            println!("{}", block);
+        }
     }
 
     Ok(result)
@@ -41,11 +42,14 @@ pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {
     )?;
 
     let pdfium = Pdfium::new(bindings);
-    let document = pdfium.load_pdf_from_file("test/short_pdf.pdf", None)?;
+    let document = pdfium.load_pdf_from_file("test/qemu_long_pdf.pdf", None)?;
 
 
     for (page_index, page) in document.pages().iter().enumerate() {
         println!("\n===== Page {} =====\n", page_index);
+        if page_index > 0 {
+            break;
+        }
 
         println!("\n===== Width {:?} =====\n", page.width());
 
