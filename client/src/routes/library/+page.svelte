@@ -1,6 +1,7 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { getAllDocuments, deleteDocument, saveDocument, type DocumentMeta } from '$lib/db';
   import { fade } from 'svelte/transition';
 
@@ -27,7 +28,7 @@
       try {
         const formData = new FormData();
         formData.append('file', file);
-        const response = await fetch('http://localhost:4000/infer_semantics', {
+        const response = await fetch(`${PUBLIC_API_BASE_URL}/infer_semantics`, {
           method: 'POST',
           body: formData
         });

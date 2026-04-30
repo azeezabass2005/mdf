@@ -1,5 +1,6 @@
 <script lang="ts">
   import { goto } from '$app/navigation';
+  import { PUBLIC_API_BASE_URL } from '$env/static/public';
   import { saveDocument } from '$lib/db';
 
   let isDragging = $state(false);
@@ -65,7 +66,7 @@
       const formData = new FormData();
       formData.append('file', selectedFile);
 
-      const response = await fetch('http://localhost:4000/infer_semantics', {
+      const response = await fetch(`${PUBLIC_API_BASE_URL}/infer_semantics`, {
         method: 'POST',
         body: formData
       });
