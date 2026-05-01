@@ -8,5 +8,6 @@ FROM debian:bookworm-slim
 WORKDIR /app
 COPY --from=builder /app/target/release/pdf-maldives-be ./
 COPY libpdfium.so ./
+ENV LD_LIBRARY_PATH=/app
 EXPOSE 4000
 CMD ["./pdf-maldives-be"]
