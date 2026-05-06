@@ -28,7 +28,8 @@ mdf/
 
 ```bash
 cd server
-cargo run
+cargo build --bins
+./target/debug/pdf-maldives
 ```
 
 ### Frontend
