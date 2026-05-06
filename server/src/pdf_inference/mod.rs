@@ -1,12 +1,32 @@
+use std::io::Write;
+use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
 use pdfium_render::prelude::*;
-use reconstruct::reconstruct_page;
 use crate::pdf_inference::reconstruct::ContentBlock;
 
 pub mod reconstruct;
 
 static PDFIUM_BINDINGS: OnceLock<Pdfium> = OnceLock::new();
+
+fn locate_worker() -> Option<std::path::PathBuf> {
+    if let Ok(p) = std::env::var("PDF_WORKER_PATH") {
+        let path = std::path::PathBuf::from(p);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let exe = std::env::current_exe().ok()?;
+    let mut dir = exe.parent()?.to_path_buf();
+    for _ in 0..3 {
+        let candidate = dir.join("pdf_worker");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+    None
+}
 
 pub fn init_pdfium() -> &'static Pdfium {
     PDFIUM_BINDINGS.get_or_init(|| {
@@ -21,18 +41,63 @@ pub fn init_pdfium() -> &'static Pdfium {
 pub fn infer_pdf_semantics(pdf_bytes: &[u8]) -> Result<Vec<Vec<ContentBlock>>, PdfiumError> {
     let pdfium = init_pdfium();
     let document = pdfium.load_pdf_from_byte_slice(pdf_bytes, None)?;
-    let mut result: Vec<Vec<ContentBlock>> = Vec::new();
+    let page_count = document.pages().len() as usize;
+    drop(document);
 
-    for (_page_index, page) in document.pages().iter().enumerate() {
-        let blocks = reconstruct_page(&page);
-        result.push(blocks.clone());
+    if page_count == 0 {
+        return Ok(Vec::new());
+    }
 
-        for block in &blocks {
-            println!("{}", block);
+    let n_workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(page_count);
+
+    let worker_path = locate_worker().expect("pdf_worker binary not found");
+
+    let mut children = Vec::with_capacity(n_workers);
+    for w in 0..n_workers {
+        let mut child = Command::new(&worker_path)
+            .arg(w.to_string())
+            .arg(n_workers.to_string())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn pdf_worker");
+
+        let mut stdin = child.stdin.take().expect("worker stdin");
+        let bytes = pdf_bytes.to_vec();
+        let writer = std::thread::spawn(move || {
+            let _ = stdin.write_all(&bytes);
+        });
+
+        children.push((child, writer));
+    }
+
+    let mut all_pages: Vec<Option<Vec<ContentBlock>>> =
+        (0..page_count).map(|_| None).collect();
+
+    for (child, writer) in children {
+        let _ = writer.join();
+        let output = child.wait_with_output().expect("wait pdf_worker");
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            panic!("pdf_worker failed ({:?}): {}", output.status, stderr);
+        }
+        let chunk: Vec<(usize, Vec<ContentBlock>)> =
+            serde_json::from_slice(&output.stdout).expect("worker output");
+        for (idx, blocks) in chunk {
+            if idx < page_count {
+                all_pages[idx] = Some(blocks);
+            }
         }
     }
 
-    Ok(result)
+    Ok(all_pages
+        .into_iter()
+        .map(|opt| opt.unwrap_or_default())
+        .collect())
 }
 
 pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {

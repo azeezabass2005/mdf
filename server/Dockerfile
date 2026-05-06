@@ -7,6 +7,7 @@ RUN cargo build --release
 FROM debian:bookworm-slim
 WORKDIR /app
 COPY --from=builder /app/target/release/pdf-maldives-be ./
+COPY --from=builder /app/target/release/pdf_worker ./
 COPY libpdfium.so ./
 ENV LD_LIBRARY_PATH=/app
 EXPOSE 4000

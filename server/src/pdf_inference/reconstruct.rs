@@ -178,8 +178,9 @@ impl fmt::Display for ContentBlock {
 pub fn extract_fragments(
     page: &PdfPage,
 ) -> (Vec<TextFragment>, Vec<(f32, f32, f32, f32)>) {
-    // Collection of potential underline paths
-    let mut underlines: Vec<(f32, f32, f32, f32)> = Vec::new();
+    let mut underlines: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(8);
+    let mut fragments: Vec<TextFragment> = Vec::new();
+
     for object in page.objects().iter() {
         if let Some(path_obj) = object.as_path_object() {
             if let Ok(bounds) = path_obj.bounds() {
@@ -193,62 +194,55 @@ pub fn extract_fragments(
                     underlines.push((left, top, right, bottom));
                 }
             }
-        }
-    }
-
-    //  Collection of text fragments
-    let mut fragments: Vec<TextFragment> = Vec::new();
-    for object in page.objects().iter() {
-        if let Some(text_obj) = object.as_text_object() {
+        } else if let Some(text_obj) = object.as_text_object() {
             let text = text_obj.text();
-
-            // Skip zero-width empty strings
             if text.trim().is_empty() {
                 continue;
             }
 
-            let font = text_obj.font();
-            let font_name = font.name();
-            let lower_name = font_name.to_lowercase();
+            let bounds = match text_obj.bounds() {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            let left = bounds.left().value;
+            let top = bounds.top().value;
+            let right = bounds.right().value;
+            let bottom = bounds.bottom().value;
 
+            let font_name = text_obj.font().name();
+            let lower_name = font_name.to_lowercase();
             let is_bold = lower_name.contains("bold") || lower_name.contains("heavy");
             let is_italic = lower_name.contains("italic") || lower_name.contains("oblique");
 
-            // Compute actual font size
+            let unscaled = text_obj.unscaled_font_size().value;
             let font_size = if let Ok(matrix) = text_obj.matrix() {
-                let scale_y = matrix.d();
-                let unscaled = text_obj.unscaled_font_size().value;
-                (unscaled * scale_y.abs() * 0.75).ceil()
+                (unscaled * matrix.d().abs() * 0.75).ceil()
             } else {
-                text_obj.unscaled_font_size().value
+                unscaled
             };
 
-            if let Ok(bounds) = text_obj.bounds() {
-                let left = bounds.left().value;
-                let top = bounds.top().value;
-                let right = bounds.right().value;
-                let bottom = bounds.bottom().value;
+            fragments.push(TextFragment {
+                text,
+                font_name,
+                font_size,
+                is_bold,
+                is_italic,
+                is_underlined: false,
+                left,
+                top,
+                right,
+                bottom,
+            });
+        }
+    }
 
-                // Check underline
-                let is_underlined = underlines.iter().any(|(ul, ut, ur, _ub)| {
-                    let vertical_gap = bottom - ut;
-                    let horiz_overlap = *ul <= right && *ur >= left;
-                    vertical_gap >= -2.0 && vertical_gap <= 5.0 && horiz_overlap
-                });
-
-                fragments.push(TextFragment {
-                    text,
-                    font_name,
-                    font_size,
-                    is_bold,
-                    is_italic,
-                    is_underlined,
-                    left,
-                    top,
-                    right,
-                    bottom,
-                });
-            }
+    if !underlines.is_empty() {
+        for frag in fragments.iter_mut() {
+            frag.is_underlined = underlines.iter().any(|(ul, ut, ur, _ub)| {
+                let vertical_gap = frag.bottom - ut;
+                let horiz_overlap = *ul <= frag.right && *ur >= frag.left;
+                vertical_gap >= -2.0 && vertical_gap <= 5.0 && horiz_overlap
+            });
         }
     }
 

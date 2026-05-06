@@ -7,5 +7,14 @@ edition = "2024"
 tokio = { version = "1.52.1", features = ["full"] }
 axum = {  version = "0.8.9", features = ["multipart"] }
 serde = { version = "1.0.228", features = ["derive"]}
+serde_json = "1.0"
 pdfium-render = "0.9.0"
 tower-http = { version="0.6.8", features = ["cors"] }
+rayon = "1.12.0"
+
+[dev-dependencies]
+criterion = { version="0.8.2", features = ["html_reports"]}
+
+[[bench]]
+name = "pdf_parsing"
+harness = false
