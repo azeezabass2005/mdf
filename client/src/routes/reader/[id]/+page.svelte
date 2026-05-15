@@ -2,10 +2,11 @@
   import { page } from '$app/stores';
   import { onMount } from 'svelte';
   import { getDocumentContent } from '$lib/db';
+  import { blockSearchText, blockSearchKind, type SemanticData } from '$lib/types';
   import { fade, slide } from 'svelte/transition';
 
   let docId = $page.params.id;
-  let document: any = $state(null);
+  let document = $state<{ data: SemanticData; rawText?: string } | null>(null);
   let isLoading = $state(true);
 
   let showTools = $state(false);
@@ -32,14 +33,20 @@
   let searchInput: HTMLInputElement | undefined = $state();
 
   let searchResults = $derived((() => {
-    if (!searchQuery.trim() || !document?.data?.pdf_semantic_data) return [];
+    const doc = document;
+    if (!searchQuery.trim() || !doc?.data?.pdf_semantic_data) return [];
     const lowerQuery = searchQuery.toLowerCase();
-    const results: any[] = [];
-    document.data.pdf_semantic_data.forEach((page: any, pIdx: number) => {
-      page.forEach((block: any, bIdx: number) => {
-        if (block.text && block.text.toLowerCase().includes(lowerQuery)) {
-          const id = `block-${pIdx}-${bIdx}`;
-          results.push({ id, text: block.text, page: pIdx + 1, kind: block.kind });
+    const results: { id: string; text: string; page: number; kind: string }[] = [];
+    doc.data.pdf_semantic_data.forEach((page, pIdx) => {
+      page.forEach((block, bIdx) => {
+        const text = blockSearchText(block);
+        if (text && text.toLowerCase().includes(lowerQuery)) {
+          results.push({
+            id: `block-${pIdx}-${bIdx}`,
+            text,
+            page: pIdx + 1,
+            kind: blockSearchKind(block),
+          });
         }
       });
     });
@@ -122,38 +129,71 @@
            {#each document.data.pdf_semantic_data as page, pIdx}
               <div class="mb-8">
                  {#each page as currBlock, bIdx}
-                    {#if currBlock.kind === 'Title'}
-                       <h1 id="block-{pIdx}-{bIdx}" class="text-4xl md:text-6xl font-medium tracking-tight mb-8 text-center text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{currBlock.text}</h1>
-                    {:else if currBlock.kind === 'Subtitle'}
-                       <h2 id="block-{pIdx}-{bIdx}" class="text-xl md:text-2xl font-light opacity-80 mb-16 text-center text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{currBlock.text}</h2>
-                    {:else if currBlock.kind === 'Epigraph'}
-                       <blockquote id="block-{pIdx}-{bIdx}" class="text-lg md:text-xl italic opacity-60 mb-12 text-center max-w-xl mx-auto text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">"{currBlock.text}"</blockquote>
-                    {:else if currBlock.kind === 'Attribution'}
-                       <p id="block-{pIdx}-{bIdx}" class="text-[10px] md:text-xs uppercase tracking-[0.3em] font-bold opacity-50 mb-16 text-center scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{currBlock.text}</p>
-                    {:else if currBlock.kind === 'Heading' || currBlock.kind === 'TableOfContentsHeading'}
-                       <h3 id="block-{pIdx}-{bIdx}" class="text-2xl md:text-3xl font-medium tracking-tight mt-16 mb-6 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{currBlock.text}</h3>
-                    {:else if currBlock.kind === 'ListItem'}
-                       <div id="block-{pIdx}-{bIdx}" class="flex gap-6 mb-4 items-start ml-2 md:ml-4 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
-                          <span class="opacity-30 flex-shrink-0 mt-1 text-xs px-2 border {isDarkMode ? 'border-white/20' : 'border-black/20'} rounded-full">/</span>
-                          <p class="text-lg md:text-xl leading-[1.8] font-light opacity-90">{currBlock.text}</p>
+                    {#if 'Text' in currBlock}
+                       {@const textBlock = currBlock.Text}
+                       {#if textBlock.kind === 'Title'}
+                          <h1 id="block-{pIdx}-{bIdx}" class="text-4xl md:text-6xl font-medium tracking-tight mb-8 text-center text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h1>
+                       {:else if textBlock.kind === 'Subtitle'}
+                          <h2 id="block-{pIdx}-{bIdx}" class="text-xl md:text-2xl font-light opacity-80 mb-16 text-center text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h2>
+                       {:else if textBlock.kind === 'Epigraph'}
+                          <blockquote id="block-{pIdx}-{bIdx}" class="text-lg md:text-xl italic opacity-60 mb-12 text-center max-w-xl mx-auto text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">"{textBlock.text}"</blockquote>
+                       {:else if textBlock.kind === 'Attribution'}
+                          <p id="block-{pIdx}-{bIdx}" class="text-[10px] md:text-xs uppercase tracking-[0.3em] font-bold opacity-50 mb-16 text-center scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</p>
+                       {:else if textBlock.kind === 'Heading' || textBlock.kind === 'TableOfContentsHeading'}
+                          <h3 id="block-{pIdx}-{bIdx}" class="text-2xl md:text-3xl font-medium tracking-tight mt-16 mb-6 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h3>
+                       {:else if textBlock.kind === 'ListItem'}
+                          <div id="block-{pIdx}-{bIdx}" class="flex gap-6 mb-4 items-start ml-2 md:ml-4 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
+                             <span class="opacity-30 flex-shrink-0 mt-1 text-xs px-2 border {isDarkMode ? 'border-white/20' : 'border-black/20'} rounded-full">/</span>
+                             <p class="text-lg md:text-xl leading-[1.8] font-light opacity-90">{textBlock.text}</p>
+                          </div>
+                       {:else if textBlock.kind === 'SubListItem'}
+                          <div id="block-{pIdx}-{bIdx}" class="flex gap-6 mb-3 items-start ml-12 md:ml-16 opacity-80 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
+                             <span class="opacity-30 flex-shrink-0 mt-[10px] w-1 h-1 rounded-full {isDarkMode ? 'bg-white' : 'bg-black'}"></span>
+                             <p class="text-[17px] md:text-lg leading-[1.8] font-light">{textBlock.text}</p>
+                          </div>
+                       {:else if textBlock.kind !== 'PageNumber'}
+                          <p id="block-{pIdx}-{bIdx}" class="text-[19px] md:text-[21px] leading-[1.9] font-light mb-8 opacity-90 tracking-[-0.01em] text-pretty scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
+                             {#if textBlock.is_bold && textBlock.is_italic}
+                                <strong class="italic font-bold">{textBlock.text}</strong>
+                             {:else if textBlock.is_bold}
+                                <strong class="font-bold font-sans tracking-tight">{textBlock.text}</strong>
+                             {:else if textBlock.is_italic}
+                                <em class="italic opacity-80">{textBlock.text}</em>
+                             {:else}
+                                {textBlock.text}
+                             {/if}
+                          </p>
+                       {/if}
+                    {:else}
+                       <!-- TODO: backend does not emit Table blocks yet (see ContentBlock::Table in server/src/pdf_inference/reconstruct.rs). Scaffold renders the shape once it does. -->
+                       {@const tableBlock = currBlock.Table}
+                       <div id="block-{pIdx}-{bIdx}" class="mb-12 overflow-x-auto scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
+                          <table class="w-full border-collapse text-sm md:text-base font-light">
+                             <tbody>
+                                {#each tableBlock.rows as row}
+                                   <tr class="border-b {isDarkMode ? 'border-white/10' : 'border-black/10'}">
+                                      {#each row.cells as cell}
+                                         <td
+                                            colspan={cell.col_span > 1 ? cell.col_span : undefined}
+                                            rowspan={cell.row_span > 1 ? cell.row_span : undefined}
+                                            class="p-3 align-top leading-[1.6]"
+                                         >
+                                            {#if cell.is_bold && cell.is_italic}
+                                               <strong class="italic font-bold">{cell.text}</strong>
+                                            {:else if cell.is_bold}
+                                               <strong class="font-bold">{cell.text}</strong>
+                                            {:else if cell.is_italic}
+                                               <em class="italic opacity-80">{cell.text}</em>
+                                            {:else}
+                                               {cell.text}
+                                            {/if}
+                                         </td>
+                                      {/each}
+                                   </tr>
+                                {/each}
+                             </tbody>
+                          </table>
                        </div>
-                    {:else if currBlock.kind === 'SubListItem'}
-                       <div id="block-{pIdx}-{bIdx}" class="flex gap-6 mb-3 items-start ml-12 md:ml-16 opacity-80 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
-                          <span class="opacity-30 flex-shrink-0 mt-[10px] w-1 h-1 rounded-full {isDarkMode ? 'bg-white' : 'bg-black'}"></span>
-                          <p class="text-[17px] md:text-lg leading-[1.8] font-light">{currBlock.text}</p>
-                       </div>
-                    {:else if currBlock.kind !== 'PageNumber'}
-                       <p id="block-{pIdx}-{bIdx}" class="text-[19px] md:text-[21px] leading-[1.9] font-light mb-8 opacity-90 tracking-[-0.01em] text-pretty scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
-                          {#if currBlock.is_bold && currBlock.is_italic}
-                             <strong class="italic font-bold">{currBlock.text}</strong>
-                          {:else if currBlock.is_bold}
-                             <strong class="font-bold font-sans tracking-tight">{currBlock.text}</strong>
-                          {:else if currBlock.is_italic}
-                             <em class="italic opacity-80">{currBlock.text}</em>
-                          {:else}
-                             {currBlock.text}
-                          {/if}
-                       </p>
                     {/if}
                  {/each}
                  

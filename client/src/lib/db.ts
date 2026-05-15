@@ -1,9 +1,7 @@
 import { openDB, type DBSchema, type IDBPDatabase } from 'idb';
+import type { SemanticData } from './types';
 
-export interface SemanticData {
-    blocks?: any[];
-    [key: string]: any; 
-}
+export type { SemanticData } from './types';
 
 export interface DocumentMeta {
     id: string;
