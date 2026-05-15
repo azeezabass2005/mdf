@@ -2,11 +2,14 @@ use axum::{Router, http::{HeaderValue, Method}, routing::post};
 use pdfium_render::prelude::PdfPage;
 use tower_http::cors::{Any, CorsLayer};
 
-use pdf_maldives_be::api::generate_semantic_data;
+use pdf_maldives_be::{api::generate_semantic_data, pdf_inference::infer_pdf_semantics};
 
 #[tokio::main]
 async fn main() {
     println!("MDF - The Maldives for PDFs");
+
+    let pdf_bytes = std::fs::read("test/qemu_pdf.pdf").unwrap();
+    let _result = infer_pdf_semantics(&pdf_bytes).unwrap();
 
     assert_send::<PdfPage>();
 

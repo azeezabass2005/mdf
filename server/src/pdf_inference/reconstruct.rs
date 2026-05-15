@@ -158,7 +158,26 @@ impl TextLine {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ContentBlock {
+pub struct TableCell {
+    pub text: String,
+    pub is_bold: bool,
+    pub is_italic: bool,
+    pub col_span: usize,
+    pub row_span: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableRow {
+    pub cells: Vec<TableCell>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Table {
+    rows: Vec<TableRow>
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Text {
     pub kind: BlockKind,
     pub text: String,
     pub font_size: f32,
@@ -167,9 +186,20 @@ pub struct ContentBlock {
     pub is_underlined: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ContentBlock  {
+    Text(Text),
+    Table(Table)
+}
+
+
+
 impl fmt::Display for ContentBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[{}] {}", self.kind, self.text)
+        match &self {
+            ContentBlock::Text(text) => write!(f, "[{}] {}", text.kind, text.text),
+            ContentBlock::Table(table) => write!(f, "[Table] {:?}", table.rows),
+        }
     }
 }
 
@@ -244,6 +274,16 @@ pub fn extract_fragments(
                 vertical_gap >= -2.0 && vertical_gap <= 5.0 && horiz_overlap
             });
         }
+    }
+    
+    eprintln!("Fragments: ");
+    for fragment in fragments.iter() {
+        eprintln!("{:?} \n", fragment);
+    }
+
+    eprintln!("Underlines: ");
+    for underline in underlines.iter() {
+        eprintln!("{:?}", underline);
     }
 
     (fragments, underlines)
@@ -565,12 +605,16 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
 
         // Determine if the current line should merge with the previous block
         let should_merge = if let Some(prev) = blocks.last() {
-            match (&prev.kind, &kind) {
-                // Merge consecutive paragraph lines only if there's no paragraph break
-                (BlockKind::Paragraph, BlockKind::Paragraph) => !has_paragraph_break,
-                // Merge consecutive epigraph lines only if there's no paragraph break
-                (BlockKind::Epigraph, BlockKind::Epigraph) => !has_paragraph_break,
-                _ => false,
+            if let ContentBlock::Text(prev_text) = prev {
+                match (&prev_text.kind, &kind) {
+                    // Merge consecutive paragraph lines only if there's no paragraph break
+                    (BlockKind::Paragraph, BlockKind::Paragraph) => !has_paragraph_break,
+                    // Merge consecutive epigraph lines only if there's no paragraph break
+                    (BlockKind::Epigraph, BlockKind::Epigraph) => !has_paragraph_break,
+                    _ => false,
+                }
+            } else {
+                false
             }
         } else {
             false
@@ -578,17 +622,21 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
 
         if should_merge {
             let prev = blocks.last_mut().unwrap();
-            prev.text.push(' ');
-            prev.text.push_str(&clean_text);
+            if let ContentBlock::Text(prev_text) = prev {
+                prev_text.text.push(' ');
+                prev_text.text.push_str(&clean_text);
+            } else {
+                // WIP Table....
+            }
         } else {
-            blocks.push(ContentBlock {
+            blocks.push(ContentBlock::Text(Text {
                 kind,
                 text: clean_text,
                 font_size: line.font_size(),
                 is_bold: line.is_bold(),
                 is_italic: line.is_italic(),
                 is_underlined: line.is_underlined(),
-            });
+            }));
         }
 
         // Update the previous line's bottom for the next iteration

@@ -62,7 +62,7 @@ pub fn infer_pdf_semantics(pdf_bytes: &[u8]) -> Result<Vec<Vec<ContentBlock>>, P
             .arg(n_workers.to_string())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::inherit())
             .spawn()
             .expect("spawn pdf_worker");
 
@@ -190,10 +190,13 @@ pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {
 
 #[cfg(test)]
 mod tests {
+    use crate::pdf_inference::infer_pdf_semantics;
+
 
     #[test]
     pub fn can_extract_pdf_text_with_formatting(){
-        todo!();
+        let pdf_bytes = std::fs::read("test/qemu_pdf.pdf").unwrap();
+        let result = infer_pdf_semantics(&pdf_bytes);
     }
 
 }
