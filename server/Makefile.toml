@@ -1,0 +1,10 @@
+[tasks.build]
+command = "cargo"
+args = ["build", "--release"]
+
+[tasks.run]
+command = "cargo"
+args = ["run", "--release"]
+
+[tasks.dev]
+script = ["cargo build && ./target/debug/pdf-maldives-be"]
