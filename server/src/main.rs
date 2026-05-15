@@ -9,7 +9,8 @@ async fn main() {
     println!("MDF - The Maldives for PDFs");
 
     let pdf_bytes = std::fs::read("test/qemu_pdf.pdf").unwrap();
-    let _result = infer_pdf_semantics(&pdf_bytes).unwrap();
+    let result = infer_pdf_semantics(&pdf_bytes).unwrap();
+    println!("result, {:?}", result);
 
     assert_send::<PdfPage>();
 

@@ -2,10 +2,11 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
-use pdfium_render::prelude::*;
 use crate::pdf_inference::reconstruct::ContentBlock;
+use pdfium_render::prelude::*;
 
 pub mod reconstruct;
+pub mod table;
 
 static PDFIUM_BINDINGS: OnceLock<Pdfium> = OnceLock::new();
 
@@ -31,9 +32,8 @@ fn locate_worker() -> Option<std::path::PathBuf> {
 pub fn init_pdfium() -> &'static Pdfium {
     PDFIUM_BINDINGS.get_or_init(|| {
         Pdfium::new(
-            Pdfium::bind_to_library(
-                Pdfium::pdfium_platform_library_name_at_path("./")
-            ).expect("Failed to initialize PDFium bindings")
+            Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
+                .expect("Failed to initialize PDFium bindings"),
         )
     })
 }
@@ -75,8 +75,7 @@ pub fn infer_pdf_semantics(pdf_bytes: &[u8]) -> Result<Vec<Vec<ContentBlock>>, P
         children.push((child, writer));
     }
 
-    let mut all_pages: Vec<Option<Vec<ContentBlock>>> =
-        (0..page_count).map(|_| None).collect();
+    let mut all_pages: Vec<Option<Vec<ContentBlock>>> = (0..page_count).map(|_| None).collect();
 
     for (child, writer) in children {
         let _ = writer.join();
@@ -101,13 +100,10 @@ pub fn infer_pdf_semantics(pdf_bytes: &[u8]) -> Result<Vec<Vec<ContentBlock>>, P
 }
 
 pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {
-    let bindings = Pdfium::bind_to_library(
-        Pdfium::pdfium_platform_library_name_at_path("./")
-    )?;
+    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))?;
 
     let pdfium = Pdfium::new(bindings);
     let document = pdfium.load_pdf_from_file("test/qemu_long_pdf.pdf", None)?;
-
 
     for (page_index, page) in document.pages().iter().enumerate() {
         println!("\n===== Page {} =====\n", page_index);
@@ -145,8 +141,10 @@ pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {
                 println!("Text: {:?}", text);
                 println!("  Font name: {:?}", font_name);
 
-                let is_bold = font_name.to_lowercase().contains("bold") || font_name.to_lowercase().contains("heavy");
-                let is_italic = font_name.to_lowercase().contains("italic") || font_name.to_lowercase().contains("oblique");
+                let is_bold = font_name.to_lowercase().contains("bold")
+                    || font_name.to_lowercase().contains("heavy");
+                let is_italic = font_name.to_lowercase().contains("italic")
+                    || font_name.to_lowercase().contains("oblique");
 
                 println!("  Is bold (from name): {}", is_bold);
                 println!("  Is italic (from name): {}", is_italic);
@@ -157,12 +155,23 @@ pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {
                 let unscaled = text_obj.unscaled_font_size();
                 let actual_size = unscaled.value * scale_y.abs() * 0.75;
 
-                println!("  Actual rendered size: {:.2} points, Unscaled size {:.2} points", actual_size.ceil(), unscaled.value);
+                println!(
+                    "  Actual rendered size: {:.2} points, Unscaled size {:.2} points",
+                    actual_size.ceil(),
+                    unscaled.value
+                );
 
                 if let Ok(text_bounds) = text_obj.bounds() {
-                    println!("  Position - Left: {}, Top: {}, Right: {}, Bottom: {}, Width: {}",
-                    text_bounds.left(), text_bounds.top(), text_bounds.right(), text_bounds.bottom(), text_bounds.width());
-                    let center_right_left_space = (page.width().value - text_bounds.width().value) / 2.0;
+                    println!(
+                        "  Position - Left: {}, Top: {}, Right: {}, Bottom: {}, Width: {}",
+                        text_bounds.left(),
+                        text_bounds.top(),
+                        text_bounds.right(),
+                        text_bounds.bottom(),
+                        text_bounds.width()
+                    );
+                    let center_right_left_space =
+                        (page.width().value - text_bounds.width().value) / 2.0;
                     let left_space_difference = center_right_left_space - text_bounds.left().value;
                     // TODO: I will come back later for right alignment, for now the left and space
                     // let right_space_difference = center_right_left_space - text_bounds.right().value;
@@ -172,13 +181,14 @@ pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {
                         println!("  Text Align: Left");
                     }
 
-                    let is_underlined = potential_underlines.iter().any(|(line_left, line_top, line_right, _line_bottom)| {
-                        let vertical_gap = text_bounds.bottom().value - line_top;
-                        let horizontally_overlaps =
-                            *line_left <= text_bounds.right().value &&
-                            *line_right >= text_bounds.left().value;
-                        vertical_gap >= -2.0 && vertical_gap <= 5.0 && horizontally_overlaps
-                    });
+                    let is_underlined = potential_underlines.iter().any(
+                        |(line_left, line_top, line_right, _line_bottom)| {
+                            let vertical_gap = text_bounds.bottom().value - line_top;
+                            let horizontally_overlaps = *line_left <= text_bounds.right().value
+                                && *line_right >= text_bounds.left().value;
+                            vertical_gap >= -2.0 && vertical_gap <= 5.0 && horizontally_overlaps
+                        },
+                    );
 
                     println!("  Is underlined: {}", is_underlined);
                 }
@@ -192,14 +202,10 @@ pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {
 mod tests {
     use crate::pdf_inference::infer_pdf_semantics;
 
-
     #[test]
-    pub fn can_extract_pdf_text_with_formatting(){
+    pub fn can_extract_pdf_text_with_formatting() {
         let pdf_bytes = std::fs::read("test/qemu_pdf.pdf").unwrap();
         let result = infer_pdf_semantics(&pdf_bytes);
     }
-
 }
-pub fn extract_correct_text () {
-
-}
+pub fn extract_correct_text() {}

@@ -1,5 +1,5 @@
 use pdfium_render::prelude::*;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -81,12 +81,13 @@ impl TextLine {
                 let threshold = prev.font_size.max(frag.font_size) * 0.3;
 
                 // Add space if there is a wide enough gap AND I don't already have one
-                let needs_space = gap > threshold && !result.ends_with(' ') && !frag.text.starts_with(' ');
+                let needs_space =
+                    gap > threshold && !result.ends_with(' ') && !frag.text.starts_with(' ');
                 if needs_space {
                     result.push(' ');
                 }
             }
-            
+
             result.push_str(&frag.text);
             prev_frag = Some(frag);
         }
@@ -162,6 +163,7 @@ pub struct TableCell {
     pub text: String,
     pub is_bold: bool,
     pub is_italic: bool,
+    pub is_underlined: bool,
     pub col_span: usize,
     pub row_span: usize,
 }
@@ -173,7 +175,9 @@ pub struct TableRow {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Table {
-    rows: Vec<TableRow>
+    pub rows: Vec<TableRow>,
+    pub col_count: usize,
+    pub y_position: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -184,31 +188,39 @@ pub struct Text {
     pub is_bold: bool,
     pub is_italic: bool,
     pub is_underlined: bool,
+    pub y_position: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ContentBlock  {
+pub enum ContentBlock {
     Text(Text),
-    Table(Table)
+    Table(Table),
 }
-
-
 
 impl fmt::Display for ContentBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self {
             ContentBlock::Text(text) => write!(f, "[{}] {}", text.kind, text.text),
-            ContentBlock::Table(table) => write!(f, "[Table] {:?}", table.rows),
+            ContentBlock::Table(table) => {
+                write!(f, "[Table] {}x{}", table.rows.len(), table.col_count)
+            }
         }
     }
 }
 
+impl ContentBlock {
+    pub fn y_position(&self) -> f32 {
+        match self {
+            ContentBlock::Text(t) => t.y_position,
+            ContentBlock::Table(t) => t.y_position,
+        }
+    }
+}
 
 /// Extract text fragments and underline paths from a single page.
-pub fn extract_fragments(
-    page: &PdfPage,
-) -> (Vec<TextFragment>, Vec<(f32, f32, f32, f32)>) {
+pub fn extract_fragments(page: &PdfPage) -> (Vec<TextFragment>, Vec<(f32, f32, f32, f32)>) {
     let mut underlines: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(8);
+    let mut structural_paths: Vec<(f32, f32, f32, f32)> = Vec::new();
     let mut fragments: Vec<TextFragment> = Vec::new();
 
     for object in page.objects().iter() {
@@ -220,8 +232,16 @@ pub fn extract_fragments(
                 let right = bounds.right().value;
                 let height = (top - bottom).abs();
                 let width = (right - left).abs();
+
                 if height < 3.0 && width > height * 2.0 {
                     underlines.push((left, top, right, bottom));
+                }
+
+                if (height < 3.0 && width > 20.0)
+                    || (width < 3.0 && height > 20.0)
+                    || (width > 15.0 && height > 10.0)
+                {
+                    structural_paths.push((left, top, right, bottom));
                 }
             }
         } else if let Some(text_obj) = object.as_text_object() {
@@ -275,20 +295,9 @@ pub fn extract_fragments(
             });
         }
     }
-    
-    eprintln!("Fragments: ");
-    for fragment in fragments.iter() {
-        eprintln!("{:?} \n", fragment);
-    }
 
-    eprintln!("Underlines: ");
-    for underline in underlines.iter() {
-        eprintln!("{:?}", underline);
-    }
-
-    (fragments, underlines)
+    (fragments, structural_paths)
 }
-
 
 /// Two fragments can fold into one if every style attribute matches.
 /// Caller is responsible for ensuring they're already on the same line.
@@ -299,7 +308,6 @@ fn can_merge(prev: &TextFragment, next: &TextFragment) -> bool {
         && prev.is_italic == next.is_italic
         && prev.is_underlined == next.is_underlined
 }
-
 
 /// Collapse adjacent fragments on a line that share the same style into
 /// single fragments. PDFs that use subsetted fonts with per-glyph TJ
@@ -315,9 +323,7 @@ fn merge_line_fragments(fragments: Vec<TextFragment>) -> Vec<TextFragment> {
             Some(prev) if can_merge(prev, &frag) => {
                 let gap = frag.left - prev.right;
                 let space_threshold = prev.font_size.max(frag.font_size) * 0.3;
-                if gap > space_threshold
-                    && !prev.text.ends_with(' ')
-                    && !frag.text.starts_with(' ')
+                if gap > space_threshold && !prev.text.ends_with(' ') && !frag.text.starts_with(' ')
                 {
                     prev.text.push(' ');
                 }
@@ -339,7 +345,6 @@ fn merge_line_fragments(fragments: Vec<TextFragment>) -> Vec<TextFragment> {
     }
     out
 }
-
 
 /// Compute alignment for a finished line. Reject Center when there's a
 /// big internal gap — a contiguous span with symmetric outer margins is
@@ -366,7 +371,6 @@ fn line_alignment(fragments: &[TextFragment], page_width: f32) -> TextAlign {
         TextAlign::Left
     }
 }
-
 
 /// In-progress line cluster used during fragment grouping.
 struct LineCluster {
@@ -422,7 +426,11 @@ pub fn group_into_lines(mut fragments: Vec<TextFragment>, page_width: f32) -> Ve
         return Vec::new();
     }
 
-    fragments.sort_by(|a, b| b.top.partial_cmp(&a.top).unwrap_or(std::cmp::Ordering::Equal));
+    fragments.sort_by(|a, b| {
+        b.top
+            .partial_cmp(&a.top)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut clusters: Vec<LineCluster> = Vec::new();
 
@@ -433,14 +441,20 @@ pub fn group_into_lines(mut fragments: Vec<TextFragment>, page_width: f32) -> Ve
         }
     }
 
-    clusters.sort_by(|a, b| b.top.partial_cmp(&a.top).unwrap_or(std::cmp::Ordering::Equal));
+    clusters.sort_by(|a, b| {
+        b.top
+            .partial_cmp(&a.top)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     clusters
         .into_iter()
         .map(|c| {
             let mut frags = c.fragments;
             frags.sort_by(|a, b| {
-                a.left.partial_cmp(&b.left).unwrap_or(std::cmp::Ordering::Equal)
+                a.left
+                    .partial_cmp(&b.left)
+                    .unwrap_or(std::cmp::Ordering::Equal)
             });
             let merged = merge_line_fragments(frags);
             let alignment = line_alignment(&merged, page_width);
@@ -453,7 +467,6 @@ pub fn group_into_lines(mut fragments: Vec<TextFragment>, page_width: f32) -> Ve
         })
         .collect()
 }
-
 
 /// Classify a line into a block kind, based on its style properties.
 fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
@@ -518,7 +531,6 @@ fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
     // Default: paragraph
     BlockKind::Paragraph
 }
-
 
 /// Merge classified lines into content blocks. Consecutive lines with the
 /// same classification and compatible styles are joined into a single block.
@@ -636,6 +648,7 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
                 is_bold: line.is_bold(),
                 is_italic: line.is_italic(),
                 is_underlined: line.is_underlined(),
+                y_position: line.top,
             }));
         }
 
@@ -646,10 +659,18 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
     blocks
 }
 
-
-/// Reconstruct a single page into semantic content blocks.
 pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
-    let (fragments, _underlines) = extract_fragments(page);
-    let lines = group_into_lines(fragments, page.width().value);
-    merge_into_blocks(lines)
+    let page_width = page.width().value;
+    let (fragments, structural_paths) = extract_fragments(page);
+    let (remaining_fragments, table_blocks) =
+        super::table::detect_and_extract_tables(fragments, &structural_paths, page_width);
+    let lines = group_into_lines(remaining_fragments, page_width);
+    let mut all_blocks = merge_into_blocks(lines);
+    all_blocks.extend(table_blocks);
+    all_blocks.sort_by(|a, b| {
+        b.y_position()
+            .partial_cmp(&a.y_position())
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    all_blocks
 }
