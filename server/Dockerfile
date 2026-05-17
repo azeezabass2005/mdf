@@ -2,7 +2,8 @@ FROM rust:1-slim-bookworm AS builder
 WORKDIR /app
 COPY Cargo.toml Cargo.lock ./
 COPY src ./src
-RUN cargo build --release
+COPY benches ./benches
+RUN cargo build --release --bins
 
 FROM debian:bookworm-slim
 WORKDIR /app

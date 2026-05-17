@@ -1,6 +1,8 @@
+use base64::{Engine as _, engine::general_purpose};
+use image::ImageFormat;
 use pdfium_render::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::fmt;
+use std::{fmt, io::Cursor};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TextAlign {
@@ -181,6 +183,14 @@ pub struct Table {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Image {
+    pub data_uri: String,
+    pub width_pt: f32,
+    pub height_pt: f32,
+    pub y_position: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Text {
     pub kind: BlockKind,
     pub text: String,
@@ -195,6 +205,7 @@ pub struct Text {
 pub enum ContentBlock {
     Text(Text),
     Table(Table),
+    Image(Image),
 }
 
 impl fmt::Display for ContentBlock {
@@ -203,6 +214,9 @@ impl fmt::Display for ContentBlock {
             ContentBlock::Text(text) => write!(f, "[{}] {}", text.kind, text.text),
             ContentBlock::Table(table) => {
                 write!(f, "[Table] {}x{}", table.rows.len(), table.col_count)
+            }
+            ContentBlock::Image(img) => {
+                write!(f, "[Image] {:.0}x{:.0}pt", img.width_pt, img.height_pt)
             }
         }
     }
@@ -213,6 +227,7 @@ impl ContentBlock {
         match self {
             ContentBlock::Text(t) => t.y_position,
             ContentBlock::Table(t) => t.y_position,
+            ContentBlock::Image(i) => i.y_position,
         }
     }
 }
@@ -667,10 +682,91 @@ pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
     let lines = group_into_lines(remaining_fragments, page_width);
     let mut all_blocks = merge_into_blocks(lines);
     all_blocks.extend(table_blocks);
+    all_blocks.extend(extract_images(page));
     all_blocks.sort_by(|a, b| {
         b.y_position()
             .partial_cmp(&a.y_position())
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     all_blocks
+}
+
+fn extract_images(page: &PdfPage) -> Vec<ContentBlock> {
+    let mut image_blocks: Vec<ContentBlock> = Vec::new();
+
+    for object in page.objects().iter() {
+        let Some(image_obj) = object.as_image_object() else {
+            continue;
+        };
+
+        let bounds = match image_obj.bounds() {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        let top = bounds.top().value;
+        let bottom = bounds.bottom().value;
+        let left = bounds.left().value;
+        let right = bounds.right().value;
+        let width_pt = (right - left).abs();
+        let height_pt = (top - bottom).abs();
+
+        // Skip images that are too small on the page to be content.
+        // At 72 DPI, 50 points = ~17mm. Anything smaller is a decorative
+        // element, a bullet graphic, or an icon — not a figure or photo.
+        if width_pt < 50.0 || height_pt < 50.0 {
+            continue;
+        }
+
+        let bitmap = match image_obj.get_raw_bitmap() {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        let dynamic_image = match bitmap.as_image() {
+            Ok(img) => img,
+            Err(_) => continue,
+        };
+
+        // Skip images whose stored pixel dimensions are too small.
+        // A 1x1 placeholder or a single-pixel spacer passes the point
+        // filter above if placed large on the page, so check pixels too.
+        if dynamic_image.width() < 50 || dynamic_image.height() < 50 {
+            continue;
+        }
+
+        // Cap the longest side at 1200px to keep the JSON response
+        // manageable. `thumbnail` maintains the aspect ratio.
+        let dynamic_image = if dynamic_image.width() > 1200 || dynamic_image.height() > 1200 {
+            dynamic_image.thumbnail(1200, 1200)
+        } else {
+            dynamic_image
+        };
+
+        // Convert to RGB (JPEG does not support an alpha channel) and
+        // encode. The raw bitmap from PDFium may be BGR or BGRA; the
+        // `image` crate handles the channel conversion inside `to_rgb8`.
+        let rgb = dynamic_image.to_rgb8();
+        let mut buf = Cursor::new(Vec::<u8>::new());
+        if image::DynamicImage::ImageRgb8(rgb)
+            .write_to(&mut buf, ImageFormat::Jpeg)
+            .is_err()
+        {
+            continue;
+        }
+
+        let data_uri = format!(
+            "data:image/jpeg;base64,{}",
+            general_purpose::STANDARD.encode(buf.into_inner())
+        );
+
+        image_blocks.push(ContentBlock::Image(Image {
+            data_uri,
+            width_pt,
+            height_pt,
+            y_position: top,
+        }));
+    }
+
+    image_blocks
 }
