@@ -23,7 +23,13 @@
         alert("Please upload a valid PDF file.");
         return;
       }
-      
+
+      if (!navigator.onLine) {
+        alert("You're offline. Converting a new PDF needs a connection; your saved documents are still readable.");
+        input.value = "";
+        return;
+      }
+
       isUploading = true;
       try {
         const formData = new FormData();

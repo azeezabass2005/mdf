@@ -58,7 +58,12 @@
 
   async function handleUpload() {
     if (!selectedFile) return;
-    
+
+    if (!navigator.onLine) {
+      uploadError = "You're offline. Converting a new PDF needs a connection; saved documents stay readable in your Library.";
+      return;
+    }
+
     isUploading = true;
     uploadError = null;
 
