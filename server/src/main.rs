@@ -1,7 +1,11 @@
-use axum::{Router, http::{HeaderValue, Method}, routing::post};
+use axum::{Router, extract::DefaultBodyLimit, http::{HeaderValue, Method}, routing::post};
 use tower_http::cors::{Any, CorsLayer};
 
 use pdf_maldives_be::api::generate_semantic_data;
+
+/// Maximum upload size for a PDF. axum defaults to 2 MB, far too small for
+/// real documents.
+const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 
 #[tokio::main]
 async fn main() {
@@ -15,6 +19,7 @@ async fn main() {
 
     let router = Router::new()
         .route("/infer_semantics", post(generate_semantic_data))
+        .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES))
         .layer(cors);
     let listener = tokio::net::TcpListener::bind("0.0.0.0:4000").await.unwrap();
     println!("Listening on port: {:?}", listener.local_addr());
