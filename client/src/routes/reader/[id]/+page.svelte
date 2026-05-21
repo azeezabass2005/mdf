@@ -141,6 +141,10 @@
                           <p id="block-{pIdx}-{bIdx}" class="text-[10px] md:text-xs uppercase tracking-[0.3em] font-bold opacity-50 mb-16 text-center scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</p>
                        {:else if textBlock.kind === 'Heading' || textBlock.kind === 'TableOfContentsHeading'}
                           <h3 id="block-{pIdx}-{bIdx}" class="text-2xl md:text-3xl font-medium tracking-tight mt-16 mb-6 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h3>
+                       {:else if textBlock.kind === 'OrderedListItem'}
+                          <div id="block-{pIdx}-{bIdx}" class="mb-4 ml-2 md:ml-4 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
+                             <p class="text-lg md:text-xl leading-[1.8] font-light opacity-90">{textBlock.text}</p>
+                          </div>
                        {:else if textBlock.kind === 'ListItem'}
                           <div id="block-{pIdx}-{bIdx}" class="flex gap-6 mb-4 items-start ml-2 md:ml-4 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
                              <span class="opacity-30 flex-shrink-0 mt-1 text-xs px-2 border {isDarkMode ? 'border-white/20' : 'border-black/20'} rounded-full">/</span>

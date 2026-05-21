@@ -12,6 +12,7 @@ export type BlockKind =
   | 'Heading'
   | 'ListItem'
   | 'SubListItem'
+  | 'OrderedListItem'
   | 'TableOfContentsHeading';
 
 export interface TextBlock {
