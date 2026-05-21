@@ -206,15 +206,32 @@ fn find_grid_region(h_lines: &[Rect], v_lines: &[Rect]) -> Option<Rect> {
     })
 }
 
-fn find_column_aligned_regions(fragments: &[TextFragment], page_width: f32) -> Vec<Rect> {
+/// Detect a borderless (whitespace-only) table from text alignment alone.
+///
+/// This is the ambiguous case — there are no ruled lines or cell boxes to
+/// lean on, so the bar for declaring a table is deliberately high. Numbered
+/// lists, "label: value" pairs, and indented prose all align on a couple of
+/// x positions and must NOT be mistaken for tables. The rules:
+///
+///   1. At least three columns recurring across at least three rows. A
+///      two-column whitespace layout is indistinguishable from a list, so
+///      those are left to the ruled-line / cell-box detector.
+///   2. Column containment: a real cell stays inside its column band. If the
+///      bulk of a column's fragments overflow past the next column's start,
+///      this is flowing text that merely shares a left margin.
+///   3. Grid density: at least three rows must actually span two or more
+///      columns.
+///
+/// Expects word/run-level fragments (glyph-level input splinters into noise).
+fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> Vec<Rect> {
     if fragments.len() < 6 {
         return Vec::new();
     }
 
+    // 1. Cluster fragments into rows by their top coordinate.
     let row_tolerance = 5.0;
     let mut row_tops: Vec<f32> = Vec::new();
     let mut frag_row_id: Vec<usize> = Vec::with_capacity(fragments.len());
-
     for frag in fragments {
         let id = match row_tops
             .iter()
@@ -229,51 +246,88 @@ fn find_column_aligned_regions(fragments: &[TextFragment], page_width: f32) -> V
         };
         frag_row_id.push(id);
     }
-
     let total_rows = row_tops.len();
     if total_rows < 3 {
         return Vec::new();
     }
 
+    // 2. Cluster fragment left edges into candidate column starts.
     let x_tolerance = 8.0;
-    let mut x_bands: Vec<(f32, Vec<usize>)> = Vec::new();
-
-    for (frag_idx, frag) in fragments.iter().enumerate() {
-        let row = frag_row_id[frag_idx];
-        match x_bands
-            .iter_mut()
-            .find(|(x, _)| (x - frag.left).abs() < x_tolerance)
+    let mut col_starts: Vec<f32> = Vec::new();
+    for frag in fragments {
+        if col_starts
+            .iter()
+            .all(|&x| (x - frag.left).abs() >= x_tolerance)
         {
-            Some((_, rows)) => {
-                if !rows.contains(&row) {
-                    rows.push(row);
-                }
-            }
-            None => x_bands.push((frag.left, vec![row])),
+            col_starts.push(frag.left);
         }
     }
+    col_starts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
+    // 3. Keep only columns that recur on at least three distinct rows.
+    let mut col_rows: Vec<Vec<usize>> = vec![Vec::new(); col_starts.len()];
+    for (i, frag) in fragments.iter().enumerate() {
+        if let Some(c) = col_starts
+            .iter()
+            .position(|&x| (x - frag.left).abs() < x_tolerance)
+        {
+            let row = frag_row_id[i];
+            if !col_rows[c].contains(&row) {
+                col_rows[c].push(row);
+            }
+        }
+    }
     let min_rows = 3.min(total_rows);
-    let strong_xs: Vec<f32> = x_bands
-        .iter()
-        .filter(|(_, rows)| rows.len() >= min_rows)
-        .map(|(x, _)| *x)
+    let strong_xs: Vec<f32> = (0..col_starts.len())
+        .filter(|&c| col_rows[c].len() >= min_rows)
+        .map(|c| col_starts[c])
         .collect();
 
-    if strong_xs.len() < 2 {
+    // Rule 1: borderless tables need at least three aligned columns.
+    if strong_xs.len() < 3 {
         return Vec::new();
     }
 
-    if strong_xs.len() == 2 {
-        let left_edge = fragments.iter().map(|f| f.left).fold(f32::MAX, f32::min);
-        let right_edge = fragments.iter().map(|f| f.right).fold(f32::MIN, f32::max);
-        let gap = (strong_xs[0] - strong_xs[1]).abs();
-        let bbox_width = right_edge - left_edge;
-        if gap > page_width * 0.10 && bbox_width > page_width * 0.85 {
+    // Rule 2: column containment. For each adjacent pair, most of the left
+    // column's fragments must end before the next column starts.
+    for pair in strong_xs.windows(2) {
+        let (this_start, next_start) = (pair[0], pair[1]);
+        let in_col: Vec<&TextFragment> = fragments
+            .iter()
+            .filter(|f| (f.left - this_start).abs() < x_tolerance)
+            .collect();
+        if in_col.is_empty() {
+            continue;
+        }
+        let overflow = in_col
+            .iter()
+            .filter(|f| f.right > next_start + x_tolerance)
+            .count();
+        if overflow * 2 > in_col.len() {
             return Vec::new();
         }
     }
 
+    // Rule 3: grid density. Count rows that touch two or more columns.
+    let multi_col_rows = (0..total_rows)
+        .filter(|&r| {
+            let touched = strong_xs
+                .iter()
+                .filter(|&&x| {
+                    fragments
+                        .iter()
+                        .enumerate()
+                        .any(|(i, f)| frag_row_id[i] == r && (f.left - x).abs() < x_tolerance)
+                })
+                .count();
+            touched >= 2
+        })
+        .count();
+    if multi_col_rows < 3 {
+        return Vec::new();
+    }
+
+    // Bounding box over the column-aligned fragments.
     let table_frags: Vec<&TextFragment> = fragments
         .iter()
         .filter(|f| strong_xs.iter().any(|x| (x - f.left).abs() < x_tolerance))

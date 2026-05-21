@@ -677,8 +677,19 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
 pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
     let page_width = page.width().value;
     let (fragments, structural_paths) = extract_fragments(page);
+
+    // Merge per-glyph fragments into word/run-level fragments before table
+    // detection. PDFs with subsetted fonts emit one text object per glyph;
+    // running column analysis on raw glyphs splinters every line into dozens
+    // of bogus columns (and slices any real cell text glyph-by-glyph).
+    // Grouping into lines and flattening gives detection real words to align.
+    let merged_fragments: Vec<TextFragment> = group_into_lines(fragments, page_width)
+        .into_iter()
+        .flat_map(|line| line.fragments)
+        .collect();
+
     let (remaining_fragments, table_blocks) =
-        super::table::detect_and_extract_tables(fragments, &structural_paths, page_width);
+        super::table::detect_and_extract_tables(merged_fragments, &structural_paths, page_width);
     let lines = group_into_lines(remaining_fragments, page_width);
     let mut all_blocks = merge_into_blocks(lines);
     all_blocks.extend(table_blocks);
