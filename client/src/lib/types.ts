@@ -1,6 +1,6 @@
 // Mirrors the Rust types in server/src/pdf_inference/reconstruct.rs.
 // Serde defaults to externally-tagged enums, so each ContentBlock arrives
-// as either { "Text": {...} } or { "Table": {...} }.
+// as { "Text": {...} }, { "Table": {...} }, or { "Image": {...} }.
 
 export type BlockKind =
   | 'PageNumber'
@@ -21,12 +21,14 @@ export interface TextBlock {
   is_bold: boolean;
   is_italic: boolean;
   is_underlined: boolean;
+  y_position: number;
 }
 
 export interface TableCell {
   text: string;
   is_bold: boolean;
   is_italic: boolean;
+  is_underlined: boolean;
   col_span: number;
   row_span: number;
 }
@@ -37,9 +39,21 @@ export interface TableRow {
 
 export interface TableBlock {
   rows: TableRow[];
+  col_count: number;
+  y_position: number;
 }
 
-export type ContentBlock = { Text: TextBlock } | { Table: TableBlock };
+export interface ImageBlock {
+  data_uri: string;
+  width_pt: number;
+  height_pt: number;
+  y_position: number;
+}
+
+export type ContentBlock =
+  | { Text: TextBlock }
+  | { Table: TableBlock }
+  | { Image: ImageBlock };
 
 export type SemanticPage = ContentBlock[];
 
@@ -57,17 +71,23 @@ export function isTableBlock(block: ContentBlock): block is { Table: TableBlock 
   return 'Table' in block;
 }
 
+export function isImageBlock(block: ContentBlock): block is { Image: ImageBlock } {
+  return 'Image' in block;
+}
+
 // Searchable text for any block. Table cells are joined with spaces so a
-// search query can match across a row.
+// search query can match across a row; images contribute nothing.
 export function blockSearchText(block: ContentBlock): string {
   if (isTextBlock(block)) return block.Text.text;
-  return block.Table.rows
-    .flatMap((row) => row.cells.map((cell) => cell.text))
-    .join(' ');
+  if (isTableBlock(block)) {
+    return block.Table.rows.flatMap((row) => row.cells.map((cell) => cell.text)).join(' ');
+  }
+  return '';
 }
 
 // Coarse label used in the search-result chip.
 export function blockSearchKind(block: ContentBlock): string {
   if (isTextBlock(block)) return block.Text.kind;
-  return 'Table';
+  if (isTableBlock(block)) return 'Table';
+  return 'Image';
 }

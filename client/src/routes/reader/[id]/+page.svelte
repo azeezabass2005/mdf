@@ -164,11 +164,10 @@
                              {/if}
                           </p>
                        {/if}
-                    {:else}
-                       <!-- TODO: backend does not emit Table blocks yet (see ContentBlock::Table in server/src/pdf_inference/reconstruct.rs). Scaffold renders the shape once it does. -->
+                    {:else if 'Table' in currBlock}
                        {@const tableBlock = currBlock.Table}
                        <div id="block-{pIdx}-{bIdx}" class="mb-12 overflow-x-auto scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
-                          <table class="w-full border-collapse text-sm md:text-base font-light">
+                          <table class="w-full border-collapse text-sm md:text-base font-light border {isDarkMode ? 'border-white/10' : 'border-black/10'}">
                              <tbody>
                                 {#each tableBlock.rows as row}
                                    <tr class="border-b {isDarkMode ? 'border-white/10' : 'border-black/10'}">
@@ -176,17 +175,12 @@
                                          <td
                                             colspan={cell.col_span > 1 ? cell.col_span : undefined}
                                             rowspan={cell.row_span > 1 ? cell.row_span : undefined}
-                                            class="p-3 align-top leading-[1.6]"
+                                            class="p-3 align-top leading-[1.6] border-r {isDarkMode ? 'border-white/10' : 'border-black/10'}"
+                                            class:font-bold={cell.is_bold}
+                                            class:italic={cell.is_italic}
+                                            class:underline={cell.is_underlined}
                                          >
-                                            {#if cell.is_bold && cell.is_italic}
-                                               <strong class="italic font-bold">{cell.text}</strong>
-                                            {:else if cell.is_bold}
-                                               <strong class="font-bold">{cell.text}</strong>
-                                            {:else if cell.is_italic}
-                                               <em class="italic opacity-80">{cell.text}</em>
-                                            {:else}
-                                               {cell.text}
-                                            {/if}
+                                            {cell.text}
                                          </td>
                                       {/each}
                                    </tr>
@@ -194,6 +188,16 @@
                              </tbody>
                           </table>
                        </div>
+                    {:else}
+                       {@const imageBlock = currBlock.Image}
+                       <figure id="block-{pIdx}-{bIdx}" class="mb-12 flex justify-center scroll-mt-32">
+                          <img
+                             src={imageBlock.data_uri}
+                             alt="Figure extracted from page {pIdx + 1}"
+                             loading="lazy"
+                             class="max-w-full h-auto rounded-xl {isDarkMode ? 'border border-white/10' : 'border border-black/10'}"
+                          />
+                       </figure>
                     {/if}
                  {/each}
                  
