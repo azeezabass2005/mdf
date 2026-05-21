@@ -30,7 +30,10 @@ sw.addEventListener('activate', (event) => {
 
 sw.addEventListener('fetch', (event) => {
 	const { request } = event;
-	if (request.method !== 'GET') return;
+	if (request.method !== 'GET') {
+		console.log("It's not a GET request, skipping:", request.method, request.url);
+		return;
+	};
 
 	const url = new URL(request.url);
 	if (url.origin !== sw.location.origin) return;
