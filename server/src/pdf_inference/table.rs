@@ -206,29 +206,15 @@ fn find_grid_region(h_lines: &[Rect], v_lines: &[Rect]) -> Option<Rect> {
     })
 }
 
-/// Detect a borderless (whitespace-only) table from text alignment alone.
-///
-/// This is the ambiguous case — there are no ruled lines or cell boxes to
-/// lean on, so the bar for declaring a table is deliberately high. Numbered
-/// lists, "label: value" pairs, and indented prose all align on a couple of
-/// x positions and must NOT be mistaken for tables. The rules:
-///
-///   1. At least three columns recurring across at least three rows. A
-///      two-column whitespace layout is indistinguishable from a list, so
-///      those are left to the ruled-line / cell-box detector.
-///   2. Column containment: a real cell stays inside its column band. If the
-///      bulk of a column's fragments overflow past the next column's start,
-///      this is flowing text that merely shares a left margin.
-///   3. Grid density: at least three rows must actually span two or more
-///      columns.
-///
-/// Expects word/run-level fragments (glyph-level input splinters into noise).
+/// Detect a borderless table from text alignment alone. With no ruled lines
+/// to lean on the bar is high: 3+ columns over 3+ rows, each column's cells
+/// contained within its band, and 3+ rows spanning multiple columns. This is
+/// what keeps numbered lists and indented prose from registering as tables.
 fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> Vec<Rect> {
     if fragments.len() < 6 {
         return Vec::new();
     }
 
-    // 1. Cluster fragments into rows by their top coordinate.
     let row_tolerance = 5.0;
     let mut row_tops: Vec<f32> = Vec::new();
     let mut frag_row_id: Vec<usize> = Vec::with_capacity(fragments.len());
@@ -251,7 +237,6 @@ fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> 
         return Vec::new();
     }
 
-    // 2. Cluster fragment left edges into candidate column starts.
     let x_tolerance = 8.0;
     let mut col_starts: Vec<f32> = Vec::new();
     for frag in fragments {
@@ -264,7 +249,7 @@ fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> 
     }
     col_starts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    // 3. Keep only columns that recur on at least three distinct rows.
+    // Keep only columns that recur on at least three distinct rows.
     let mut col_rows: Vec<Vec<usize>> = vec![Vec::new(); col_starts.len()];
     for (i, frag) in fragments.iter().enumerate() {
         if let Some(c) = col_starts

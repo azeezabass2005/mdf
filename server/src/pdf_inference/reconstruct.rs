@@ -22,6 +22,7 @@ pub enum BlockKind {
     Heading,
     ListItem,
     SubListItem,
+    OrderedListItem,
     TableOfContentsHeading,
 }
 
@@ -37,6 +38,7 @@ impl fmt::Display for BlockKind {
             BlockKind::Heading => write!(f, "Heading"),
             BlockKind::ListItem => write!(f, "ListItem"),
             BlockKind::SubListItem => write!(f, "SubListItem"),
+            BlockKind::OrderedListItem => write!(f, "OrderedListItem"),
             BlockKind::TableOfContentsHeading => write!(f, "TOCHeading"),
         }
     }
@@ -483,6 +485,40 @@ pub fn group_into_lines(mut fragments: Vec<TextFragment>, page_width: f32) -> Ve
         .collect()
 }
 
+/// Length of an ordered-list marker ("1.", "12)", "1 .", …) at the start of
+/// `text`, or `None` if it doesn't begin with one followed by content.
+fn ordered_marker_len(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
+    if digits == 0 || digits > 3 {
+        return None;
+    }
+    // PDFs may emit whitespace between the number and its delimiter.
+    let mut i = digits;
+    while bytes.get(i) == Some(&b' ') {
+        i += 1;
+    }
+    let delim = *bytes.get(i)?;
+    if delim != b'.' && delim != b')' {
+        return None;
+    }
+    if text[i + 1..].trim_start().is_empty() {
+        return None;
+    }
+    Some(i + 1)
+}
+
+/// Rewrite a detected marker to a canonical "N. " / "N) " form, collapsing
+/// any stray whitespace the PDF inserted around it.
+fn normalize_ordered_marker(text: &str) -> String {
+    let Some(len) = ordered_marker_len(text) else {
+        return text.to_string();
+    };
+    let digits = text.bytes().take_while(|b| b.is_ascii_digit()).count();
+    let delim = text.as_bytes()[len - 1] as char;
+    format!("{}{} {}", &text[..digits], delim, text[len..].trim_start())
+}
+
 /// Classify a line into a block kind, based on its style properties.
 fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
     let text = line.merged_text();
@@ -505,6 +541,11 @@ fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
     // Sub-bullet list items
     if line.starts_with_sub_bullet() {
         return BlockKind::SubListItem;
+    }
+
+    // Ordered list items: "1." / "2)" followed by text, left-aligned.
+    if alignment == TextAlign::Left && ordered_marker_len(&text).is_some() {
+        return BlockKind::OrderedListItem;
     }
 
     // Title: centered, underlined, larger font
@@ -606,6 +647,8 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
                 .join(" ")
                 .trim()
                 .to_string()
+        } else if kind == BlockKind::OrderedListItem {
+            normalize_ordered_marker(&text)
         } else {
             text
         };
@@ -638,6 +681,11 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
                     (BlockKind::Paragraph, BlockKind::Paragraph) => !has_paragraph_break,
                     // Merge consecutive epigraph lines only if there's no paragraph break
                     (BlockKind::Epigraph, BlockKind::Epigraph) => !has_paragraph_break,
+                    // Fold a wrapped continuation line into the list item above it
+                    (
+                        BlockKind::OrderedListItem | BlockKind::ListItem | BlockKind::SubListItem,
+                        BlockKind::Paragraph,
+                    ) => !has_paragraph_break,
                     _ => false,
                 }
             } else {
@@ -678,11 +726,9 @@ pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
     let page_width = page.width().value;
     let (fragments, structural_paths) = extract_fragments(page);
 
-    // Merge per-glyph fragments into word/run-level fragments before table
-    // detection. PDFs with subsetted fonts emit one text object per glyph;
-    // running column analysis on raw glyphs splinters every line into dozens
-    // of bogus columns (and slices any real cell text glyph-by-glyph).
-    // Grouping into lines and flattening gives detection real words to align.
+    // Merge per-glyph fragments into words before table detection; subsetted
+    // fonts emit one text object per glyph, which otherwise splinters every
+    // line into bogus columns.
     let merged_fragments: Vec<TextFragment> = group_into_lines(fragments, page_width)
         .into_iter()
         .flat_map(|line| line.fragments)
