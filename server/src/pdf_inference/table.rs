@@ -169,10 +169,8 @@ fn find_grid_region(h_lines: &[Rect], v_lines: &[Rect]) -> Option<Rect> {
     let v_y_min = v_lines.iter().map(|r| r.bottom).fold(f32::MAX, f32::min);
     let v_y_max = v_lines.iter().map(|r| r.top).fold(f32::MIN, f32::max);
 
-    // Only consider horizontal lines whose centre falls within the Y span of
-    // the vertical lines. Section-heading underlines above or below the table
-    // are also thin horizontal paths; without this filter they expand the
-    // detected region to include content that isn't part of the table.
+    // Filter out section-heading underlines above/below the table — they're
+    // also thin horizontal paths and would otherwise expand the table bounds.
     let relevant_h: Vec<Rect> = h_lines
         .iter()
         .copied()
@@ -206,10 +204,9 @@ fn find_grid_region(h_lines: &[Rect], v_lines: &[Rect]) -> Option<Rect> {
     })
 }
 
-/// Detect a borderless table from text alignment alone. With no ruled lines
-/// to lean on the bar is high: 3+ columns over 3+ rows, each column's cells
-/// contained within its band, and 3+ rows spanning multiple columns. This is
-/// what keeps numbered lists and indented prose from registering as tables.
+// Borderless table detection. Requires 3+ columns over 3+ rows, each column's
+// cells contained within its band, and 3+ rows touching multiple columns —
+// otherwise numbered lists and indented prose register as tables.
 fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> Vec<Rect> {
     if fragments.len() < 6 {
         return Vec::new();
@@ -249,7 +246,6 @@ fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> 
     }
     col_starts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Keep only columns that recur on at least three distinct rows.
     let mut col_rows: Vec<Vec<usize>> = vec![Vec::new(); col_starts.len()];
     for (i, frag) in fragments.iter().enumerate() {
         if let Some(c) = col_starts
@@ -268,13 +264,12 @@ fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> 
         .map(|c| col_starts[c])
         .collect();
 
-    // Rule 1: borderless tables need at least three aligned columns.
     if strong_xs.len() < 3 {
         return Vec::new();
     }
 
-    // Rule 2: column containment. For each adjacent pair, most of the left
-    // column's fragments must end before the next column starts.
+    // Column containment: for each adjacent pair, most of the left column's
+    // fragments must end before the next column starts.
     for pair in strong_xs.windows(2) {
         let (this_start, next_start) = (pair[0], pair[1]);
         let in_col: Vec<&TextFragment> = fragments
@@ -293,7 +288,6 @@ fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> 
         }
     }
 
-    // Rule 3: grid density. Count rows that touch two or more columns.
     let multi_col_rows = (0..total_rows)
         .filter(|&r| {
             let touched = strong_xs
@@ -312,7 +306,6 @@ fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> 
         return Vec::new();
     }
 
-    // Bounding box over the column-aligned fragments.
     let table_frags: Vec<&TextFragment> = fragments
         .iter()
         .filter(|f| strong_xs.iter().any(|x| (x - f.left).abs() < x_tolerance))
@@ -440,7 +433,6 @@ fn build_table(
     let n_rows = row_bounds.len();
 
     let mut cell_frags: Vec<Vec<Vec<&TextFragment>>> = vec![vec![Vec::new(); n_cols]; n_rows];
-    // Text pieces from spanning fragments, stored alongside their style flags.
     let mut cell_extra: Vec<Vec<Vec<(String, bool, bool, bool)>>> =
         vec![vec![Vec::new(); n_cols]; n_rows];
 

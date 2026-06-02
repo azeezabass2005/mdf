@@ -11,7 +11,6 @@ pub async fn generate_semantic_data(mut multipart: Multipart) -> impl IntoRespon
             ));
         }
         Err(error) => {
-            // Most commonly the upload exceeded the configured body limit.
             return ApiResponse::Error(SemanticDataApiError::BadRequest(format!(
                 "Could not read the uploaded file: {error}"
             )));

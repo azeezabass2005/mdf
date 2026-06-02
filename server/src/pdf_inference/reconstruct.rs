@@ -67,8 +67,6 @@ pub struct TextLine {
 }
 
 impl TextLine {
-    /// Merge all fragment text into one string, inserting spaces between
-    /// fragments that aren't already separated.
     pub fn merged_text(&self) -> String {
         let mut result = String::new();
         let mut prev_frag: Option<&TextFragment> = None;
@@ -79,12 +77,8 @@ impl TextLine {
             }
 
             if let Some(prev) = prev_frag {
-                // Calculate horizontal gap between current fragment's left and previous fragment's right
                 let gap = frag.left - prev.right;
-
                 let threshold = prev.font_size.max(frag.font_size) * 0.3;
-
-                // Add space if there is a wide enough gap AND I don't already have one
                 let needs_space =
                     gap > threshold && !result.ends_with(' ') && !frag.text.starts_with(' ');
                 if needs_space {
@@ -98,7 +92,6 @@ impl TextLine {
         result.trim().to_string()
     }
 
-    /// Dominant font size on this line (the max across fragments).
     pub fn font_size(&self) -> f32 {
         self.fragments
             .iter()
@@ -106,7 +99,6 @@ impl TextLine {
             .fold(0.0_f32, f32::max)
     }
 
-    /// Whether the majority of non-empty text on this line is bold.
     pub fn is_bold(&self) -> bool {
         let (bold_chars, total_chars) = self.fragments.iter().fold((0, 0), |(b, t), f| {
             let len = f.text.trim().len();
@@ -115,7 +107,6 @@ impl TextLine {
         total_chars > 0 && bold_chars * 2 >= total_chars
     }
 
-    /// Whether the majority of non-empty text on this line is italic.
     pub fn is_italic(&self) -> bool {
         let (italic_chars, total_chars) = self.fragments.iter().fold((0, 0), |(b, t), f| {
             let len = f.text.trim().len();
@@ -124,18 +115,14 @@ impl TextLine {
         total_chars > 0 && italic_chars * 2 >= total_chars
     }
 
-    /// Whether any fragment on this line is underlined.
     pub fn is_underlined(&self) -> bool {
         self.fragments.iter().any(|f| f.is_underlined)
     }
 
-    /// Alignment of this line (computed from the line's combined bounds
-    /// against page width, not from any single fragment).
     pub fn alignment(&self) -> TextAlign {
         self.alignment.clone()
     }
 
-    /// Left edge of the leftmost fragment.
     pub fn left(&self) -> f32 {
         self.fragments
             .iter()
@@ -143,7 +130,6 @@ impl TextLine {
             .fold(f32::MAX, f32::min)
     }
 
-    /// Whether this line starts with a bullet character (Symbol font "•").
     pub fn starts_with_bullet(&self) -> bool {
         self.fragments
             .iter()
@@ -152,7 +138,6 @@ impl TextLine {
             .unwrap_or(false)
     }
 
-    /// Whether this line starts with a sub-bullet "o" in Courier font.
     pub fn starts_with_sub_bullet(&self) -> bool {
         self.fragments
             .iter()
@@ -234,7 +219,6 @@ impl ContentBlock {
     }
 }
 
-/// Extract text fragments and underline paths from a single page.
 pub fn extract_fragments(page: &PdfPage) -> (Vec<TextFragment>, Vec<(f32, f32, f32, f32)>) {
     let mut underlines: Vec<(f32, f32, f32, f32)> = Vec::with_capacity(8);
     let mut structural_paths: Vec<(f32, f32, f32, f32)> = Vec::new();
@@ -316,8 +300,6 @@ pub fn extract_fragments(page: &PdfPage) -> (Vec<TextFragment>, Vec<(f32, f32, f
     (fragments, structural_paths)
 }
 
-/// Two fragments can fold into one if every style attribute matches.
-/// Caller is responsible for ensuring they're already on the same line.
 fn can_merge(prev: &TextFragment, next: &TextFragment) -> bool {
     prev.font_name == next.font_name
         && (prev.font_size - next.font_size).abs() < 0.5
@@ -326,13 +308,8 @@ fn can_merge(prev: &TextFragment, next: &TextFragment) -> bool {
         && prev.is_underlined == next.is_underlined
 }
 
-/// Collapse adjacent fragments on a line that share the same style into
-/// single fragments. PDFs that use subsetted fonts with per-glyph TJ
-/// positioning emit one text object per glyph; this folds those back into
-/// word/run-level fragments. Inserts a space when the horizontal gap is
-/// large enough to represent a real word boundary.
-///
-/// Expects fragments already sorted left-to-right.
+// Subsetted fonts with per-glyph TJ positioning emit one text object per glyph;
+// this folds same-styled neighbours back into word-level fragments.
 fn merge_line_fragments(fragments: Vec<TextFragment>) -> Vec<TextFragment> {
     let mut out: Vec<TextFragment> = Vec::with_capacity(fragments.len());
     for frag in fragments {
@@ -363,9 +340,7 @@ fn merge_line_fragments(fragments: Vec<TextFragment>) -> Vec<TextFragment> {
     out
 }
 
-/// Compute alignment for a finished line. Reject Center when there's a
-/// big internal gap — a contiguous span with symmetric outer margins is
-/// centered; a span with an empty middle is multi-column.
+// Reject Center when an internal gap reveals the line is actually multi-column.
 fn line_alignment(fragments: &[TextFragment], page_width: f32) -> TextAlign {
     if fragments.is_empty() {
         return TextAlign::Left;
@@ -389,7 +364,6 @@ fn line_alignment(fragments: &[TextFragment], page_width: f32) -> TextAlign {
     }
 }
 
-/// In-progress line cluster used during fragment grouping.
 struct LineCluster {
     fragments: Vec<TextFragment>,
     max_font_size: f32,
@@ -407,9 +381,6 @@ impl LineCluster {
         }
     }
 
-    /// Same-line test: vertical bbox overlap, with a font-size ratio cap
-    /// to keep different-size text in separate lines when their bands
-    /// happen to overlap.
     fn accepts(&self, frag: &TextFragment) -> bool {
         let overlap = self.top.min(frag.top) - self.bottom.max(frag.bottom);
         let min_fs = self.max_font_size.min(frag.font_size).max(0.1);
@@ -431,13 +402,9 @@ impl LineCluster {
     }
 }
 
-/// Group fragments into lines, then merge adjacent same-style fragments
-/// within each line.
-///
-/// Each fragment is assigned to any matching cluster in the active set,
-/// not just the most recent. A single-active-line walk fails when
-/// fragments from different lines interleave in sort order — the loop
-/// would keep closing and reopening lines.
+// Assigns each fragment to any matching cluster, not just the most recent —
+// a single-active-line walk drops fragments when sibling lines interleave in
+// sort order.
 pub fn group_into_lines(mut fragments: Vec<TextFragment>, page_width: f32) -> Vec<TextLine> {
     if fragments.is_empty() {
         return Vec::new();
@@ -485,8 +452,6 @@ pub fn group_into_lines(mut fragments: Vec<TextFragment>, page_width: f32) -> Ve
         .collect()
 }
 
-/// Length of an ordered-list marker ("1.", "12)", "1 .", …) at the start of
-/// `text`, or `None` if it doesn't begin with one followed by content.
 fn ordered_marker_len(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
     let digits = bytes.iter().take_while(|b| b.is_ascii_digit()).count();
@@ -508,8 +473,6 @@ fn ordered_marker_len(text: &str) -> Option<usize> {
     Some(i + 1)
 }
 
-/// Rewrite a detected marker to a canonical "N. " / "N) " form, collapsing
-/// any stray whitespace the PDF inserted around it.
 fn normalize_ordered_marker(text: &str) -> String {
     let Some(len) = ordered_marker_len(text) else {
         return text.to_string();
@@ -519,7 +482,6 @@ fn normalize_ordered_marker(text: &str) -> String {
     format!("{}{} {}", &text[..digits], delim, text[len..].trim_start())
 }
 
-/// Classify a line into a block kind, based on its style properties.
 fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
     let text = line.merged_text();
     let font_size = line.font_size();
@@ -528,71 +490,53 @@ fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
     let italic = line.is_italic();
     let underlined = line.is_underlined();
 
-    // Page numbers: small, centered, very short numeric text
     if text.trim().parse::<u32>().is_ok() && alignment == TextAlign::Center && font_size <= 9.0 {
         return BlockKind::PageNumber;
     }
 
-    // Bullet list items
     if line.starts_with_bullet() {
         return BlockKind::ListItem;
     }
 
-    // Sub-bullet list items
     if line.starts_with_sub_bullet() {
         return BlockKind::SubListItem;
     }
 
-    // Ordered list items: "1." / "2)" followed by text, left-aligned.
     if alignment == TextAlign::Left && ordered_marker_len(&text).is_some() {
         return BlockKind::OrderedListItem;
     }
 
-    // Title: centered, underlined, larger font
     if alignment == TextAlign::Center && underlined && font_size >= 12.0 {
         return BlockKind::Title;
     }
 
-    // "Table of Contents" heading
     if bold && underlined && text.contains("Table of Contents") {
         return BlockKind::TableOfContentsHeading;
     }
 
-    // Subtitle: centered, smaller than title, not italic
     if alignment == TextAlign::Center && !italic && !bold && font_size <= 9.0 && text.len() < 60 {
-        // Likely author/subtitle line
         return BlockKind::Subtitle;
     }
 
-    // Epigraph: centered + italic
     if alignment == TextAlign::Center && italic {
         return BlockKind::Epigraph;
     }
 
-    // Attribution: centered, not italic, not bold, short
     if alignment == TextAlign::Center && !italic && !bold && text.len() < 40 {
         return BlockKind::Attribution;
     }
 
-    // TOC bold entries within the TOC section
     if is_in_toc && bold {
         return BlockKind::ListItem;
     }
 
-    // Heading: bold, left-aligned
     if bold && alignment == TextAlign::Left {
         return BlockKind::Heading;
     }
 
-    // Default: paragraph
     BlockKind::Paragraph
 }
 
-/// Merge classified lines into content blocks. Consecutive lines with the
-/// same classification and compatible styles are joined into a single block.
-/// Uses vertical gap detection to identify paragraph boundaries: if the gap
-/// between two consecutive lines exceeds normal line spacing (1.3× font size),
-/// they belong to separate paragraphs.
 pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
     if lines.is_empty() {
         return Vec::new();
@@ -600,8 +544,6 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
 
     let mut blocks: Vec<ContentBlock> = Vec::new();
     let mut in_toc = false;
-    // Track the bottom coordinate of the previous line so I can measure
-    // vertical gaps between consecutive lines.
     let mut prev_line_bottom: Option<f32> = None;
 
     for line in &lines {
@@ -610,17 +552,13 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
             continue;
         }
 
-        // Track whether it is in the TOC section
         if text.contains("Table of Contents") {
             in_toc = true;
         }
 
         let kind = classify_line(line, in_toc);
 
-        // For list items with bullet/sub-bullet, strip the bullet prefix from
-        // text and use the content after it.
         let clean_text = if kind == BlockKind::ListItem && line.starts_with_bullet() {
-            // Get the text from all fragments after the bullet symbol fragment
             let bullet_idx = line
                 .fragments
                 .iter()
@@ -634,7 +572,6 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
                 .trim()
                 .to_string()
         } else if kind == BlockKind::SubListItem && line.starts_with_sub_bullet() {
-            // Get text from fragments after the "o" marker
             let marker_idx = line
                 .fragments
                 .iter()
@@ -657,51 +594,32 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
             continue;
         }
 
-        // Measure the vertical gap between this line and the previous one.
-        // In PDF coordinates, Y increases upward, so the previous line's
-        // bottom is ABOVE the current line's top.
-        // gap = prev_bottom - current_top  (positive = normal spacing)
-        // Within a paragraph, gap ≈ font_size × 1.2 (normal leading).
-        // Between paragraphs, gap is noticeably larger.
+        // PDF Y grows upward, so prev.bottom sits above current.top; a gap
+        // exceeding ~1.3× the line's font size marks a paragraph boundary.
         let has_paragraph_break = if let Some(prev_bottom) = prev_line_bottom {
-            let gap = prev_bottom - line.top;
-            let font_size = line.font_size();
-            // A gap larger than 1.3× the font size indicates a paragraph break.
-            // Normal line spacing is ~1.2× font size, so 1.3× gives comfortable margin.
-            gap > font_size * 1.3
+            prev_bottom - line.top > line.font_size() * 1.3
         } else {
             false
         };
 
-        // Determine if the current line should merge with the previous block
-        let should_merge = if let Some(prev) = blocks.last() {
-            if let ContentBlock::Text(prev_text) = prev {
-                match (&prev_text.kind, &kind) {
-                    // Merge consecutive paragraph lines only if there's no paragraph break
-                    (BlockKind::Paragraph, BlockKind::Paragraph) => !has_paragraph_break,
-                    // Merge consecutive epigraph lines only if there's no paragraph break
-                    (BlockKind::Epigraph, BlockKind::Epigraph) => !has_paragraph_break,
-                    // Fold a wrapped continuation line into the list item above it
-                    (
-                        BlockKind::OrderedListItem | BlockKind::ListItem | BlockKind::SubListItem,
-                        BlockKind::Paragraph,
-                    ) => !has_paragraph_break,
-                    _ => false,
-                }
-            } else {
-                false
+        let should_merge = if let Some(ContentBlock::Text(prev_text)) = blocks.last() {
+            match (&prev_text.kind, &kind) {
+                (BlockKind::Paragraph, BlockKind::Paragraph)
+                | (BlockKind::Epigraph, BlockKind::Epigraph)
+                | (
+                    BlockKind::OrderedListItem | BlockKind::ListItem | BlockKind::SubListItem,
+                    BlockKind::Paragraph,
+                ) => !has_paragraph_break,
+                _ => false,
             }
         } else {
             false
         };
 
         if should_merge {
-            let prev = blocks.last_mut().unwrap();
-            if let ContentBlock::Text(prev_text) = prev {
+            if let Some(ContentBlock::Text(prev_text)) = blocks.last_mut() {
                 prev_text.text.push(' ');
                 prev_text.text.push_str(&clean_text);
-            } else {
-                // WIP Table....
             }
         } else {
             blocks.push(ContentBlock::Text(Text {
@@ -715,7 +633,6 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
             }));
         }
 
-        // Update the previous line's bottom for the next iteration
         prev_line_bottom = Some(line.bottom);
     }
 
@@ -726,9 +643,8 @@ pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
     let page_width = page.width().value;
     let (fragments, structural_paths) = extract_fragments(page);
 
-    // Merge per-glyph fragments into words before table detection; subsetted
-    // fonts emit one text object per glyph, which otherwise splinters every
-    // line into bogus columns.
+    // Subsetted fonts emit one text object per glyph; merge into runs before
+    // table detection so each line isn't read as a row of single-glyph columns.
     let merged_fragments: Vec<TextFragment> = group_into_lines(fragments, page_width)
         .into_iter()
         .flat_map(|line| line.fragments)
@@ -768,9 +684,6 @@ fn extract_images(page: &PdfPage) -> Vec<ContentBlock> {
         let width_pt = (right - left).abs();
         let height_pt = (top - bottom).abs();
 
-        // Skip images that are too small on the page to be content.
-        // At 72 DPI, 50 points = ~17mm. Anything smaller is a decorative
-        // element, a bullet graphic, or an icon — not a figure or photo.
         if width_pt < 50.0 || height_pt < 50.0 {
             continue;
         }
@@ -785,24 +698,16 @@ fn extract_images(page: &PdfPage) -> Vec<ContentBlock> {
             Err(_) => continue,
         };
 
-        // Skip images whose stored pixel dimensions are too small.
-        // A 1x1 placeholder or a single-pixel spacer passes the point
-        // filter above if placed large on the page, so check pixels too.
         if dynamic_image.width() < 50 || dynamic_image.height() < 50 {
             continue;
         }
 
-        // Cap the longest side at 1200px to keep the JSON response
-        // manageable. `thumbnail` maintains the aspect ratio.
         let dynamic_image = if dynamic_image.width() > 1200 || dynamic_image.height() > 1200 {
             dynamic_image.thumbnail(1200, 1200)
         } else {
             dynamic_image
         };
 
-        // Convert to RGB (JPEG does not support an alpha channel) and
-        // encode. The raw bitmap from PDFium may be BGR or BGRA; the
-        // `image` crate handles the channel conversion inside `to_rgb8`.
         let rgb = dynamic_image.to_rgb8();
         let mut buf = Cursor::new(Vec::<u8>::new());
         if image::DynamicImage::ImageRgb8(rgb)

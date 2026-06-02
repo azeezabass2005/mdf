@@ -3,8 +3,6 @@ use tower_http::cors::{Any, CorsLayer};
 
 use pdf_maldives_be::api::generate_semantic_data;
 
-/// Maximum upload size for a PDF. axum defaults to 2 MB, far too small for
-/// real documents.
 const MAX_UPLOAD_BYTES: usize = 100 * 1024 * 1024;
 
 #[tokio::main]
