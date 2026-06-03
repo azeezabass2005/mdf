@@ -489,6 +489,20 @@ fn ordered_marker_len(text: &str) -> Option<usize> {
     Some(i + 1)
 }
 
+fn looks_complete(text: &str) -> bool {
+    matches!(
+        text.trim().chars().last(),
+        Some('.' | '!' | '?' | ':' | ';')
+    )
+}
+
+fn line_right(line: &TextLine) -> f32 {
+    line.fragments
+        .iter()
+        .map(|f| f.right)
+        .fold(f32::MIN, f32::max)
+}
+
 fn normalize_ordered_marker(text: &str) -> String {
     let Some(len) = ordered_marker_len(text) else {
         return text.to_string();
@@ -562,9 +576,15 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
         return Vec::new();
     }
 
+    let content_right = lines
+        .iter()
+        .flat_map(|l| l.fragments.iter().map(|f| f.right))
+        .fold(f32::MIN, f32::max);
+
     let mut blocks: Vec<ContentBlock> = Vec::new();
     let mut in_toc = false;
     let mut prev_line_bottom: Option<f32> = None;
+    let mut prev_line_right: Option<f32> = None;
 
     for line in &lines {
         let text = line.merged_text();
@@ -630,6 +650,18 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
                     BlockKind::OrderedListItem | BlockKind::ListItem | BlockKind::SubListItem,
                     BlockKind::Paragraph,
                 ) => !has_paragraph_break,
+                (BlockKind::HeadingCandidate, BlockKind::HeadingCandidate) => {
+                    let same_style = (prev_text.font_size - line.font_size()).abs() < 0.5
+                        && prev_text.is_bold == line.is_bold()
+                        && prev_text.is_italic == line.is_italic();
+                    let filled_width = prev_line_right
+                        .map(|r| content_right - r < line.font_size() * 2.0)
+                        .unwrap_or(false);
+                    !has_paragraph_break
+                        && same_style
+                        && filled_width
+                        && !looks_complete(&prev_text.text)
+                }
                 _ => false,
             }
         } else {
@@ -654,6 +686,7 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
         }
 
         prev_line_bottom = Some(line.bottom);
+        prev_line_right = Some(line_right(line));
     }
 
     // eprintln!("These are the final blocks: {:?}", blocks);
