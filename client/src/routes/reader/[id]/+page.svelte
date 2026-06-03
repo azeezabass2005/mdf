@@ -131,16 +131,22 @@
                  {#each page as currBlock, bIdx}
                     {#if 'Text' in currBlock}
                        {@const textBlock = currBlock.Text}
-                       {#if textBlock.kind === 'Title'}
-                          <h1 id="block-{pIdx}-{bIdx}" class="text-4xl md:text-6xl font-medium tracking-tight mb-8 text-center text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h1>
-                       {:else if textBlock.kind === 'Subtitle'}
-                          <h2 id="block-{pIdx}-{bIdx}" class="text-xl md:text-2xl font-light opacity-80 mb-16 text-center text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h2>
+                       {#if textBlock.kind === 'Heading1' || textBlock.kind === 'HeadingCandidate'}
+                          <h1 id="block-{pIdx}-{bIdx}" class="text-4xl md:text-6xl font-medium tracking-tight mt-20 mb-8 text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h1>
+                       {:else if textBlock.kind === 'Heading2'}
+                          <h2 id="block-{pIdx}-{bIdx}" class="text-3xl md:text-4xl font-medium tracking-tight mt-16 mb-6 text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h2>
+                       {:else if textBlock.kind === 'Heading3' || textBlock.kind === 'TableOfContentsHeading'}
+                          <h3 id="block-{pIdx}-{bIdx}" class="text-2xl md:text-3xl font-medium tracking-tight mt-14 mb-5 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h3>
+                       {:else if textBlock.kind === 'Heading4'}
+                          <h4 id="block-{pIdx}-{bIdx}" class="text-xl md:text-2xl font-medium tracking-tight mt-12 mb-4 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h4>
+                       {:else if textBlock.kind === 'Heading5'}
+                          <h5 id="block-{pIdx}-{bIdx}" class="text-lg md:text-xl font-semibold tracking-tight mt-10 mb-3 uppercase scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h5>
+                       {:else if textBlock.kind === 'Heading6'}
+                          <h6 id="block-{pIdx}-{bIdx}" class="text-base md:text-lg font-semibold tracking-[0.05em] mt-8 mb-3 uppercase opacity-80 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h6>
                        {:else if textBlock.kind === 'Epigraph'}
                           <blockquote id="block-{pIdx}-{bIdx}" class="text-lg md:text-xl italic opacity-60 mb-12 text-center max-w-xl mx-auto text-balance scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">"{textBlock.text}"</blockquote>
                        {:else if textBlock.kind === 'Attribution'}
                           <p id="block-{pIdx}-{bIdx}" class="text-[10px] md:text-xs uppercase tracking-[0.3em] font-bold opacity-50 mb-16 text-center scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</p>
-                       {:else if textBlock.kind === 'Heading' || textBlock.kind === 'TableOfContentsHeading'}
-                          <h3 id="block-{pIdx}-{bIdx}" class="text-2xl md:text-3xl font-medium tracking-tight mt-16 mb-6 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">{textBlock.text}</h3>
                        {:else if textBlock.kind === 'OrderedListItem'}
                           <div id="block-{pIdx}-{bIdx}" class="mb-4 ml-2 md:ml-4 scroll-mt-32 transition-colors duration-1000 p-2 rounded-xl">
                              <p class="text-lg md:text-xl leading-[1.8] font-light opacity-90">{textBlock.text}</p>

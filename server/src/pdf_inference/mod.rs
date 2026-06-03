@@ -2,7 +2,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
-use crate::pdf_inference::reconstruct::ContentBlock;
+use crate::pdf_inference::reconstruct::{ContentBlock, assign_heading_levels};
 use pdfium_render::prelude::*;
 
 pub mod reconstruct;
@@ -93,10 +93,14 @@ pub fn infer_pdf_semantics(pdf_bytes: &[u8]) -> Result<Vec<Vec<ContentBlock>>, P
         }
     }
 
-    Ok(all_pages
+    let mut pages: Vec<Vec<ContentBlock>> = all_pages
         .into_iter()
         .map(|opt| opt.unwrap_or_default())
-        .collect())
+        .collect();
+
+    assign_heading_levels(&mut pages);
+
+    Ok(pages)
 }
 
 pub fn extract_pdf_text_with_formatting() -> Result<(), PdfiumError> {

@@ -14,12 +14,16 @@ pub enum TextAlign {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum BlockKind {
     PageNumber,
-    Title,
-    Subtitle,
+    Heading1,
+    Heading2,
+    Heading3,
+    Heading4,
+    Heading5,
+    Heading6,
+    HeadingCandidate,
     Epigraph,
     Attribution,
     Paragraph,
-    Heading,
     ListItem,
     SubListItem,
     OrderedListItem,
@@ -30,12 +34,16 @@ impl fmt::Display for BlockKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             BlockKind::PageNumber => write!(f, "PageNumber"),
-            BlockKind::Title => write!(f, "Title"),
-            BlockKind::Subtitle => write!(f, "Subtitle"),
+            BlockKind::Heading1 => write!(f, "Heading1"),
+            BlockKind::Heading2 => write!(f, "Heading2"),
+            BlockKind::Heading3 => write!(f, "Heading3"),
+            BlockKind::Heading4 => write!(f, "Heading4"),
+            BlockKind::Heading5 => write!(f, "Heading5"),
+            BlockKind::Heading6 => write!(f, "Heading6"),
+            BlockKind::HeadingCandidate => write!(f, "HeadingCandidate"),
             BlockKind::Epigraph => write!(f, "Epigraph"),
             BlockKind::Attribution => write!(f, "Attribution"),
             BlockKind::Paragraph => write!(f, "Paragraph"),
-            BlockKind::Heading => write!(f, "Heading"),
             BlockKind::ListItem => write!(f, "ListItem"),
             BlockKind::SubListItem => write!(f, "SubListItem"),
             BlockKind::OrderedListItem => write!(f, "OrderedListItem"),
@@ -48,6 +56,8 @@ impl fmt::Display for BlockKind {
 pub struct TextFragment {
     pub text: String,
     pub font_name: String,
+    // TODO: Remove this field later, just want to confirm font size is being extracted correctly
+    pub unscaled: f32,
     pub font_size: f32,
     pub is_bold: bool,
     pub is_italic: bool,
@@ -267,7 +277,7 @@ pub fn extract_fragments(page: &PdfPage) -> (Vec<TextFragment>, Vec<(f32, f32, f
 
             let unscaled = text_obj.unscaled_font_size().value;
             let font_size = if let Ok(matrix) = text_obj.matrix() {
-                (unscaled * matrix.d().abs() * 0.75).ceil()
+                (unscaled * matrix.d().abs()).ceil()
             } else {
                 unscaled
             };
@@ -275,6 +285,8 @@ pub fn extract_fragments(page: &PdfPage) -> (Vec<TextFragment>, Vec<(f32, f32, f
             fragments.push(TextFragment {
                 text,
                 font_name,
+                // TODO: Remove this field later, just want to confirm font size is being extracted correctly
+                unscaled,
                 font_size,
                 is_bold,
                 is_italic,
@@ -415,10 +427,14 @@ pub fn group_into_lines(mut fragments: Vec<TextFragment>, page_width: f32) -> Ve
             .partial_cmp(&a.top)
             .unwrap_or(std::cmp::Ordering::Equal)
     });
+    
 
     let mut clusters: Vec<LineCluster> = Vec::new();
 
+    // eprintln!("These are the remaining fragments:");
+    
     for frag in fragments {
+        // eprintln!("{:?} \n", frag);
         match clusters.iter().position(|c| c.accepts(&frag)) {
             Some(idx) => clusters[idx].absorb(frag),
             None => clusters.push(LineCluster::new(frag)),
@@ -490,7 +506,7 @@ fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
     let italic = line.is_italic();
     let underlined = line.is_underlined();
 
-    if text.trim().parse::<u32>().is_ok() && alignment == TextAlign::Center && font_size <= 9.0 {
+    if text.trim().parse::<u32>().is_ok() && alignment == TextAlign::Center && font_size <= 11.0 {
         return BlockKind::PageNumber;
     }
 
@@ -506,16 +522,12 @@ fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
         return BlockKind::OrderedListItem;
     }
 
-    if alignment == TextAlign::Center && underlined && font_size >= 12.0 {
-        return BlockKind::Title;
-    }
-
     if bold && underlined && text.contains("Table of Contents") {
         return BlockKind::TableOfContentsHeading;
     }
 
-    if alignment == TextAlign::Center && !italic && !bold && font_size <= 9.0 && text.len() < 60 {
-        return BlockKind::Subtitle;
+    if alignment == TextAlign::Center && underlined && text.len() < 120 {
+        return BlockKind::HeadingCandidate;
     }
 
     if alignment == TextAlign::Center && italic {
@@ -526,12 +538,20 @@ fn classify_line(line: &TextLine, is_in_toc: bool) -> BlockKind {
         return BlockKind::Attribution;
     }
 
+    if alignment == TextAlign::Center && bold && text.len() < 120 {
+        return BlockKind::HeadingCandidate;
+    }
+
+    if alignment == TextAlign::Center && !italic && !bold && font_size <= 11.0 && text.len() < 60 {
+        return BlockKind::HeadingCandidate;
+    }
+
     if is_in_toc && bold {
         return BlockKind::ListItem;
     }
 
-    if bold && alignment == TextAlign::Left {
-        return BlockKind::Heading;
+    if bold && alignment == TextAlign::Left && text.len() < 120 {
+        return BlockKind::HeadingCandidate;
     }
 
     BlockKind::Paragraph
@@ -636,6 +656,8 @@ pub fn merge_into_blocks(lines: Vec<TextLine>) -> Vec<ContentBlock> {
         prev_line_bottom = Some(line.bottom);
     }
 
+    // eprintln!("These are the final blocks: {:?}", blocks);
+
     blocks
 }
 
@@ -731,4 +753,53 @@ fn extract_images(page: &PdfPage) -> Vec<ContentBlock> {
     }
 
     image_blocks
+}
+
+pub fn assign_heading_levels(pages: &mut [Vec<ContentBlock>]) {
+    let mut sizes: Vec<f32> = pages
+        .iter()
+        .flatten()
+        .filter_map(|b| match b {
+            ContentBlock::Text(t) if t.kind == BlockKind::HeadingCandidate => Some(t.font_size),
+            _ => None,
+        })
+        .collect();
+
+    if sizes.is_empty() {
+        return;
+    }
+
+    sizes.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut distinct_levels: Vec<f32> = Vec::new();
+    for size in &sizes {
+        if distinct_levels.iter().all(|l| (l - size).abs() >= 0.5) {
+            distinct_levels.push(*size);
+        }
+    }
+
+    let level_for = |size: f32| -> BlockKind {
+        let idx = distinct_levels
+            .iter()
+            .position(|l| (l - size).abs() < 0.5)
+            .unwrap_or(distinct_levels.len().saturating_sub(1));
+        match idx.min(5) {
+            0 => BlockKind::Heading1,
+            1 => BlockKind::Heading2,
+            2 => BlockKind::Heading3,
+            3 => BlockKind::Heading4,
+            4 => BlockKind::Heading5,
+            _ => BlockKind::Heading6,
+        }
+    };
+
+    for page in pages.iter_mut() {
+        for block in page.iter_mut() {
+            if let ContentBlock::Text(t) = block {
+                if t.kind == BlockKind::HeadingCandidate {
+                    t.kind = level_for(t.font_size);
+                }
+            }
+        }
+    }
 }
