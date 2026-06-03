@@ -756,6 +756,22 @@ fn extract_images(page: &PdfPage) -> Vec<ContentBlock> {
 }
 
 pub fn assign_heading_levels(pages: &mut [Vec<ContentBlock>]) {
+    let mut body_sizes: Vec<f32> = pages
+        .iter()
+        .flatten()
+        .filter_map(|b| match b {
+            ContentBlock::Text(t) if t.kind == BlockKind::Paragraph => Some(t.font_size),
+            _ => None,
+        })
+        .collect();
+
+    let body_size = if body_sizes.is_empty() {
+        10.0
+    } else {
+        body_sizes.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        body_sizes[body_sizes.len() / 2]
+    };
+
     let mut sizes: Vec<f32> = pages
         .iter()
         .flatten()
@@ -778,12 +794,27 @@ pub fn assign_heading_levels(pages: &mut [Vec<ContentBlock>]) {
         }
     }
 
+    let ratio = distinct_levels[0] / body_size;
+    let starting_offset: usize = if ratio >= 1.4 {
+        0
+    } else if ratio >= 1.25 {
+        1
+    } else if ratio >= 1.15 {
+        2
+    } else if ratio >= 1.05 {
+        3
+    } else if ratio >= 0.95 {
+        4
+    } else {
+        5
+    };
+
     let level_for = |size: f32| -> BlockKind {
         let idx = distinct_levels
             .iter()
             .position(|l| (l - size).abs() < 0.5)
             .unwrap_or(distinct_levels.len().saturating_sub(1));
-        match idx.min(5) {
+        match (idx + starting_offset).min(5) {
             0 => BlockKind::Heading1,
             1 => BlockKind::Heading2,
             2 => BlockKind::Heading3,
