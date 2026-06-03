@@ -31,30 +31,13 @@ impl Rect {
         let cy = (frag.top + frag.bottom) / 2.0;
         cx >= self.left && cx <= self.right && cy >= self.bottom && cy <= self.top
     }
-
-    fn union(self, other: Self) -> Self {
-        Self {
-            left: self.left.min(other.left),
-            top: self.top.max(other.top),
-            right: self.right.max(other.right),
-            bottom: self.bottom.min(other.bottom),
-        }
-    }
-
-    fn overlaps_or_adjacent(self, other: Self, tolerance: f32) -> bool {
-        self.left - tolerance <= other.right
-            && self.right + tolerance >= other.left
-            && self.bottom - tolerance <= other.top
-            && self.top + tolerance >= other.bottom
-    }
 }
 
 pub fn detect_and_extract_tables(
     fragments: Vec<TextFragment>,
     structural_paths: &[(f32, f32, f32, f32)],
-    page_width: f32,
 ) -> (Vec<TextFragment>, Vec<ContentBlock>) {
-    let table_regions = find_table_regions(structural_paths, &fragments, page_width);
+    let table_regions = find_table_regions(structural_paths);
 
     if table_regions.is_empty() {
         return (fragments, Vec::new());
@@ -105,14 +88,9 @@ pub fn detect_and_extract_tables(
     (remaining, table_blocks)
 }
 
-fn find_table_regions(
-    paths: &[(f32, f32, f32, f32)],
-    fragments: &[TextFragment],
-    page_width: f32,
-) -> Vec<Rect> {
+fn find_table_regions(paths: &[(f32, f32, f32, f32)]) -> Vec<Rect> {
     let mut h_lines: Vec<Rect> = Vec::new();
     let mut v_lines: Vec<Rect> = Vec::new();
-    let mut cell_rects: Vec<Rect> = Vec::new();
 
     for &(left, top, right, bottom) in paths {
         let r = Rect::new(left, top, right, bottom);
@@ -121,15 +99,6 @@ fn find_table_regions(
             h_lines.push(r);
         } else if r.width() < 3.0 && r.height() > 20.0 {
             v_lines.push(r);
-        } else if r.width() > 15.0 && r.height() > 10.0 {
-            cell_rects.push(r);
-        }
-    }
-
-    if cell_rects.len() >= 4 {
-        let regions = cluster_into_regions(cell_rects, 5.0, 4);
-        if !regions.is_empty() {
-            return regions;
         }
     }
 
@@ -139,28 +108,7 @@ fn find_table_regions(
         }
     }
 
-    find_column_aligned_regions(fragments, page_width)
-}
-
-fn cluster_into_regions(rects: Vec<Rect>, tolerance: f32, min_count: usize) -> Vec<Rect> {
-    let mut clusters: Vec<(Rect, usize)> = Vec::new();
-
-    'rect: for rect in rects {
-        for (bbox, count) in clusters.iter_mut() {
-            if bbox.overlaps_or_adjacent(rect, tolerance) {
-                *bbox = bbox.union(rect);
-                *count += 1;
-                continue 'rect;
-            }
-        }
-        clusters.push((rect, 1));
-    }
-
-    clusters
-        .into_iter()
-        .filter(|(_, count)| *count >= min_count)
-        .map(|(bbox, _)| bbox)
-        .collect()
+    Vec::new()
 }
 
 fn find_grid_region(h_lines: &[Rect], v_lines: &[Rect]) -> Option<Rect> {
@@ -202,129 +150,6 @@ fn find_grid_region(h_lines: &[Rect], v_lines: &[Rect]) -> Option<Rect> {
         right: h_x_max.max(v_x_max),
         bottom: h_y_min.min(v_y_min),
     })
-}
-
-// Borderless table detection. Requires 3+ columns over 3+ rows, each column's
-// cells contained within its band, and 3+ rows touching multiple columns —
-// otherwise numbered lists and indented prose register as tables.
-fn find_column_aligned_regions(fragments: &[TextFragment], _page_width: f32) -> Vec<Rect> {
-    if fragments.len() < 6 {
-        return Vec::new();
-    }
-
-    let row_tolerance = 5.0;
-    let mut row_tops: Vec<f32> = Vec::new();
-    let mut frag_row_id: Vec<usize> = Vec::with_capacity(fragments.len());
-    for frag in fragments {
-        let id = match row_tops
-            .iter()
-            .position(|&y| (y - frag.top).abs() < row_tolerance)
-        {
-            Some(id) => id,
-            None => {
-                let id = row_tops.len();
-                row_tops.push(frag.top);
-                id
-            }
-        };
-        frag_row_id.push(id);
-    }
-    let total_rows = row_tops.len();
-    if total_rows < 3 {
-        return Vec::new();
-    }
-
-    let x_tolerance = 8.0;
-    let mut col_starts: Vec<f32> = Vec::new();
-    for frag in fragments {
-        if col_starts
-            .iter()
-            .all(|&x| (x - frag.left).abs() >= x_tolerance)
-        {
-            col_starts.push(frag.left);
-        }
-    }
-    col_starts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-    let mut col_rows: Vec<Vec<usize>> = vec![Vec::new(); col_starts.len()];
-    for (i, frag) in fragments.iter().enumerate() {
-        if let Some(c) = col_starts
-            .iter()
-            .position(|&x| (x - frag.left).abs() < x_tolerance)
-        {
-            let row = frag_row_id[i];
-            if !col_rows[c].contains(&row) {
-                col_rows[c].push(row);
-            }
-        }
-    }
-    let min_rows = 3.min(total_rows);
-    let strong_xs: Vec<f32> = (0..col_starts.len())
-        .filter(|&c| col_rows[c].len() >= min_rows)
-        .map(|c| col_starts[c])
-        .collect();
-
-    if strong_xs.len() < 3 {
-        return Vec::new();
-    }
-
-    // Column containment: for each adjacent pair, most of the left column's
-    // fragments must end before the next column starts.
-    for pair in strong_xs.windows(2) {
-        let (this_start, next_start) = (pair[0], pair[1]);
-        let in_col: Vec<&TextFragment> = fragments
-            .iter()
-            .filter(|f| (f.left - this_start).abs() < x_tolerance)
-            .collect();
-        if in_col.is_empty() {
-            continue;
-        }
-        let overflow = in_col
-            .iter()
-            .filter(|f| f.right > next_start + x_tolerance)
-            .count();
-        if overflow * 2 > in_col.len() {
-            return Vec::new();
-        }
-    }
-
-    let multi_col_rows = (0..total_rows)
-        .filter(|&r| {
-            let touched = strong_xs
-                .iter()
-                .filter(|&&x| {
-                    fragments
-                        .iter()
-                        .enumerate()
-                        .any(|(i, f)| frag_row_id[i] == r && (f.left - x).abs() < x_tolerance)
-                })
-                .count();
-            touched >= 2
-        })
-        .count();
-    if multi_col_rows < 3 {
-        return Vec::new();
-    }
-
-    let table_frags: Vec<&TextFragment> = fragments
-        .iter()
-        .filter(|f| strong_xs.iter().any(|x| (x - f.left).abs() < x_tolerance))
-        .collect();
-
-    let left = table_frags.iter().map(|f| f.left).fold(f32::MAX, f32::min);
-    let right = table_frags.iter().map(|f| f.right).fold(f32::MIN, f32::max);
-    let top = table_frags.iter().map(|f| f.top).fold(f32::MIN, f32::max);
-    let bottom = table_frags
-        .iter()
-        .map(|f| f.bottom)
-        .fold(f32::MAX, f32::min);
-
-    vec![Rect {
-        left: left - 3.0,
-        top: top + 3.0,
-        right: right + 3.0,
-        bottom: bottom - 3.0,
-    }]
 }
 
 fn find_column_bounds(fragments: &[&TextFragment], region: Rect) -> Vec<(f32, f32)> {

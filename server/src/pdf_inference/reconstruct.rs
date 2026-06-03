@@ -706,7 +706,7 @@ pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
         .collect();
 
     let (remaining_fragments, table_blocks) =
-        super::table::detect_and_extract_tables(merged_fragments, &structural_paths, page_width);
+        super::table::detect_and_extract_tables(merged_fragments, &structural_paths);
     let lines = group_into_lines(remaining_fragments, page_width);
     let mut all_blocks = merge_into_blocks(lines);
     all_blocks.extend(table_blocks);
