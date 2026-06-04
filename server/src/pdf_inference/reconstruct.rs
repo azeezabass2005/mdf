@@ -320,34 +320,17 @@ fn can_merge(prev: &TextFragment, next: &TextFragment) -> bool {
         && prev.is_underlined == next.is_underlined
 }
 
-fn compute_median_gap(fragments: &[TextFragment]) -> f32 {
-    let mut gaps: Vec<f32> = fragments
-        .windows(2)
-        .filter(|pair| can_merge(&pair[0], &pair[1]))
-        .map(|pair| pair[1].left - pair[0].right)
-        .filter(|&g| g > 0.0)
-        .collect();
-    if gaps.is_empty() {
-        return 0.0;
-    }
-    gaps.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    gaps[gaps.len() / 2]
-}
-
 // Subsetted fonts with per-glyph TJ positioning emit one text object per glyph;
 // this folds same-styled neighbours back into word-level fragments.
 fn merge_line_fragments(fragments: Vec<TextFragment>) -> Vec<TextFragment> {
-    let median_gap = compute_median_gap(&fragments);
     let mut out: Vec<TextFragment> = Vec::with_capacity(fragments.len());
     for frag in fragments {
         let merged = match out.last_mut() {
             Some(prev) if can_merge(prev, &frag) => {
                 let gap = frag.left - prev.right;
-                let font_size = prev.font_size.max(frag.font_size);
-                let needs_space = (gap > 0.5 * font_size || gap > 1.5 * median_gap)
-                    && !prev.text.ends_with(' ')
-                    && !frag.text.starts_with(' ');
-                if needs_space {
+                let space_threshold = prev.font_size.max(frag.font_size) * 0.3;
+                if gap > space_threshold && !prev.text.ends_with(' ') && !frag.text.starts_with(' ')
+                {
                     prev.text.push(' ');
                 }
                 prev.text.push_str(&frag.text);
