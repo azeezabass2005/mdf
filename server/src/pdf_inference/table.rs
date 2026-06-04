@@ -33,62 +33,34 @@ impl Rect {
     }
 }
 
-pub fn detect_and_extract_tables(
-    fragments: Vec<TextFragment>,
-    structural_paths: &[(f32, f32, f32, f32)],
-) -> (Vec<TextFragment>, Vec<ContentBlock>) {
-    let table_regions = find_table_regions(structural_paths);
-
-    if table_regions.is_empty() {
-        return (fragments, Vec::new());
-    }
-
-    let mut claimed = vec![false; fragments.len()];
-    let mut table_blocks: Vec<ContentBlock> = Vec::new();
-
-    for region in &table_regions {
-        let indexed: Vec<(usize, &TextFragment)> = fragments
-            .iter()
-            .enumerate()
-            .filter(|(_, f)| region.contains_center(f))
-            .collect();
-
-        if indexed.is_empty() {
-            continue;
-        }
-
-        let refs: Vec<&TextFragment> = indexed.iter().map(|(_, f)| *f).collect();
-
-        let col_bounds = find_column_bounds(&refs, *region);
-        let row_bounds = find_row_bounds(&refs, structural_paths, *region);
-
-        if col_bounds.len() < 2 || row_bounds.len() < 2 {
-            continue;
-        }
-
-        let table = build_table(&refs, &col_bounds, &row_bounds, region.top);
-
-        if table.rows.len() < 2 {
-            continue;
-        }
-
-        for (idx, _) in &indexed {
-            claimed[*idx] = true;
-        }
-
-        table_blocks.push(ContentBlock::Table(table));
-    }
-
-    let remaining: Vec<TextFragment> = fragments
-        .into_iter()
-        .enumerate()
-        .filter_map(|(i, f)| if claimed[i] { None } else { Some(f) })
-        .collect();
-
-    (remaining, table_blocks)
+pub struct GridLayout {
+    region: Rect,
+    col_bounds: Vec<(f32, f32)>,
+    row_bounds: Vec<(f32, f32)>,
 }
 
-fn find_table_regions(paths: &[(f32, f32, f32, f32)]) -> Vec<Rect> {
+impl GridLayout {
+    pub fn contains(&self, frag: &TextFragment) -> bool {
+        self.region.contains_center(frag)
+    }
+}
+
+pub fn extract_table(
+    fragments: &[TextFragment],
+    layout: &GridLayout,
+) -> Option<ContentBlock> {
+    if fragments.is_empty() {
+        return None;
+    }
+    let refs: Vec<&TextFragment> = fragments.iter().collect();
+    let table = build_table(&refs, &layout.col_bounds, &layout.row_bounds, layout.region.top);
+    if table.rows.len() < 2 {
+        return None;
+    }
+    Some(ContentBlock::Table(table))
+}
+
+pub fn find_grid_layout(paths: &[(f32, f32, f32, f32)]) -> Option<GridLayout> {
     let mut h_lines: Vec<Rect> = Vec::new();
     let mut v_lines: Vec<Rect> = Vec::new();
 
@@ -102,150 +74,44 @@ fn find_table_regions(paths: &[(f32, f32, f32, f32)]) -> Vec<Rect> {
         }
     }
 
-    if h_lines.len() >= 2 && v_lines.len() >= 2 {
-        if let Some(region) = find_grid_region(&h_lines, &v_lines) {
-            return vec![region];
-        }
+    if h_lines.len() < 2 || v_lines.len() < 2 {
+        return None;
     }
 
-    Vec::new()
-}
-
-fn find_grid_region(h_lines: &[Rect], v_lines: &[Rect]) -> Option<Rect> {
-    let v_x_min = v_lines.iter().map(|r| r.left).fold(f32::MAX, f32::min);
-    let v_x_max = v_lines.iter().map(|r| r.right).fold(f32::MIN, f32::max);
     let v_y_min = v_lines.iter().map(|r| r.bottom).fold(f32::MAX, f32::min);
     let v_y_max = v_lines.iter().map(|r| r.top).fold(f32::MIN, f32::max);
 
-    // Filter out section-heading underlines above/below the table — they're
-    // also thin horizontal paths and would otherwise expand the table bounds.
-    let relevant_h: Vec<Rect> = h_lines
+    let mut v_xs: Vec<f32> = v_lines.iter().map(|r| (r.left + r.right) / 2.0).collect();
+    v_xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    v_xs.dedup_by(|a, b| (*b - *a).abs() < 3.0);
+
+    let mut h_ys: Vec<f32> = h_lines
         .iter()
-        .copied()
-        .filter(|r| {
-            let y_mid = (r.top + r.bottom) / 2.0;
-            y_mid >= v_y_min && y_mid <= v_y_max
-        })
+        .map(|r| (r.top + r.bottom) / 2.0)
+        .filter(|&y| y >= v_y_min - 1.0 && y <= v_y_max + 1.0)
         .collect();
+    h_ys.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+    h_ys.dedup_by(|a, b| (*b - *a).abs() < 3.0);
 
-    if relevant_h.len() < 2 {
+    if v_xs.len() < 2 || h_ys.len() < 2 {
         return None;
     }
 
-    let h_x_min = relevant_h.iter().map(|r| r.left).fold(f32::MAX, f32::min);
-    let h_x_max = relevant_h.iter().map(|r| r.right).fold(f32::MIN, f32::max);
-    let h_y_min = relevant_h.iter().map(|r| r.bottom).fold(f32::MAX, f32::min);
-    let h_y_max = relevant_h.iter().map(|r| r.top).fold(f32::MIN, f32::max);
+    let col_bounds: Vec<(f32, f32)> = v_xs.windows(2).map(|w| (w[0], w[1])).collect();
+    let row_bounds: Vec<(f32, f32)> = h_ys.windows(2).map(|w| (w[1], w[0])).collect();
 
-    let x_overlap = h_x_min.max(v_x_min) < h_x_max.min(v_x_max);
-    let y_overlap = h_y_min.max(v_y_min) < h_y_max.min(v_y_max);
+    let region = Rect {
+        left: *v_xs.first().unwrap(),
+        right: *v_xs.last().unwrap(),
+        top: *h_ys.first().unwrap(),
+        bottom: *h_ys.last().unwrap(),
+    };
 
-    if !x_overlap || !y_overlap {
-        return None;
-    }
-
-    Some(Rect {
-        left: h_x_min.min(v_x_min),
-        top: h_y_max.max(v_y_max),
-        right: h_x_max.max(v_x_max),
-        bottom: h_y_min.min(v_y_min),
+    Some(GridLayout {
+        region,
+        col_bounds,
+        row_bounds,
     })
-}
-
-fn find_column_bounds(fragments: &[&TextFragment], region: Rect) -> Vec<(f32, f32)> {
-    let x_tolerance = 8.0;
-    let mut col_starts: Vec<f32> = Vec::new();
-
-    for frag in fragments {
-        if col_starts
-            .iter()
-            .all(|&x| (x - frag.left).abs() >= x_tolerance)
-        {
-            col_starts.push(frag.left);
-        }
-    }
-
-    col_starts.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-    if col_starts.len() < 2 {
-        return Vec::new();
-    }
-
-    col_starts
-        .iter()
-        .enumerate()
-        .map(|(i, &start)| {
-            let col_left = if i == 0 {
-                region.left
-            } else {
-                (col_starts[i - 1] + start) / 2.0
-            };
-            let col_right = if i + 1 < col_starts.len() {
-                (start + col_starts[i + 1]) / 2.0
-            } else {
-                region.right
-            };
-            (col_left, col_right)
-        })
-        .collect()
-}
-
-fn find_row_bounds(
-    fragments: &[&TextFragment],
-    paths: &[(f32, f32, f32, f32)],
-    region: Rect,
-) -> Vec<(f32, f32)> {
-    let mut h_ys: Vec<f32> = paths
-        .iter()
-        .filter_map(|&(left, top, right, bottom)| {
-            let r = Rect::new(left, top, right, bottom);
-            let y_mid = (r.top + r.bottom) / 2.0;
-            if r.height() < 3.0 && r.width() > 20.0 && y_mid >= region.bottom && y_mid <= region.top
-            {
-                Some(y_mid)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    if h_ys.len() >= 2 {
-        h_ys.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-        h_ys.dedup_by(|a, b| (*b - *a).abs() < 3.0);
-
-        let rows: Vec<(f32, f32)> = h_ys.windows(2).map(|w| (w[1], w[0])).collect();
-
-        if !rows.is_empty() {
-            return rows;
-        }
-    }
-
-    let y_tolerance = 5.0;
-    let mut row_tops: Vec<f32> = Vec::new();
-
-    for frag in fragments {
-        if row_tops
-            .iter()
-            .all(|&y| (y - frag.top).abs() >= y_tolerance)
-        {
-            row_tops.push(frag.top);
-        }
-    }
-
-    row_tops.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
-
-    row_tops
-        .iter()
-        .enumerate()
-        .map(|(i, &top)| {
-            let row_bottom = if i + 1 < row_tops.len() {
-                (top + row_tops[i + 1]) / 2.0
-            } else {
-                region.bottom
-            };
-            (row_bottom, top)
-        })
-        .collect()
 }
 
 fn build_table(
@@ -258,41 +124,16 @@ fn build_table(
     let n_rows = row_bounds.len();
 
     let mut cell_frags: Vec<Vec<Vec<&TextFragment>>> = vec![vec![Vec::new(); n_cols]; n_rows];
-    let mut cell_extra: Vec<Vec<Vec<(String, bool, bool, bool)>>> =
-        vec![vec![Vec::new(); n_cols]; n_rows];
 
     for frag in fragments {
+        let cx = (frag.left + frag.right) / 2.0;
         let cy = (frag.top + frag.bottom) / 2.0;
 
-        let col = col_bounds
-            .iter()
-            .position(|&(l, r)| frag.left >= l - 5.0 && frag.left < r);
+        let col = col_bounds.iter().position(|&(l, r)| cx >= l && cx < r);
         let row = row_bounds.iter().position(|&(b, t)| cy >= b && cy < t);
 
         if let (Some(c), Some(r)) = (col, row) {
-            let col_right = col_bounds[c].1;
-            if frag.right > col_right + 10.0 && c + 1 < n_cols && frag.text.contains(' ') {
-                let (left_text, right_text) =
-                    split_text_at_boundary(&frag.text, frag.left, frag.right, col_right);
-                if !left_text.is_empty() {
-                    cell_extra[r][c].push((
-                        left_text,
-                        frag.is_bold,
-                        frag.is_italic,
-                        frag.is_underlined,
-                    ));
-                }
-                if !right_text.is_empty() {
-                    cell_extra[r][c + 1].push((
-                        right_text,
-                        frag.is_bold,
-                        frag.is_italic,
-                        frag.is_underlined,
-                    ));
-                }
-            } else {
-                cell_frags[r][c].push(frag);
-            }
+            cell_frags[r][c].push(frag);
         }
     }
 
@@ -301,25 +142,12 @@ fn build_table(
             cells: (0..n_cols)
                 .map(|c| {
                     let frags = &cell_frags[r][c];
-                    let extras = &cell_extra[r][c];
-                    let mut text = merge_cell_fragments(frags);
-                    for (extra_text, _, _, _) in extras {
-                        if !text.is_empty() {
-                            text.push(' ');
-                        }
-                        text.push_str(extra_text);
-                    }
-                    let is_bold =
-                        frags.iter().any(|f| f.is_bold) || extras.iter().any(|(_, b, _, _)| *b);
-                    let is_italic =
-                        frags.iter().any(|f| f.is_italic) || extras.iter().any(|(_, _, i, _)| *i);
-                    let is_underlined = frags.iter().any(|f| f.is_underlined)
-                        || extras.iter().any(|(_, _, _, u)| *u);
+                    let text = merge_cell_fragments(frags);
                     TableCell {
                         text: text.trim().to_string(),
-                        is_bold,
-                        is_italic,
-                        is_underlined,
+                        is_bold: frags.iter().any(|f| f.is_bold),
+                        is_italic: frags.iter().any(|f| f.is_italic),
+                        is_underlined: frags.iter().any(|f| f.is_underlined),
                         col_span: 1,
                         row_span: 1,
                     }
@@ -334,37 +162,6 @@ fn build_table(
         col_count: n_cols,
         y_position,
     }
-}
-
-fn split_text_at_boundary(
-    text: &str,
-    frag_left: f32,
-    frag_right: f32,
-    boundary_x: f32,
-) -> (String, String) {
-    let frag_width = frag_right - frag_left;
-    if frag_width <= 0.0 {
-        return (text.to_string(), String::new());
-    }
-    let split_fraction = (boundary_x - frag_left).max(0.0) / frag_width;
-    let words: Vec<&str> = text.split_whitespace().collect();
-    if words.len() < 2 {
-        return (text.to_string(), String::new());
-    }
-    let total_chars = words.iter().map(|w| w.len()).sum::<usize>() + (words.len() - 1);
-    let mut cumulative = 0usize;
-    let mut split_idx = words.len();
-    for (i, word) in words.iter().enumerate() {
-        if i > 0 && cumulative as f32 / total_chars as f32 >= split_fraction {
-            split_idx = i;
-            break;
-        }
-        cumulative += word.len() + 1;
-    }
-    if split_idx >= words.len() {
-        return (text.to_string(), String::new());
-    }
-    (words[..split_idx].join(" "), words[split_idx..].join(" "))
 }
 
 fn merge_cell_fragments(frags: &[&TextFragment]) -> String {
@@ -404,11 +201,22 @@ fn merge_cell_fragments(frags: &[&TextFragment]) -> String {
     lines
         .iter()
         .map(|line| {
-            line.iter()
-                .map(|f| f.text.as_str())
-                .collect::<String>()
-                .trim()
-                .to_string()
+            let mut s = String::new();
+            for (i, f) in line.iter().enumerate() {
+                if i > 0 {
+                    let prev = line[i - 1];
+                    let gap = f.left - prev.right;
+                    let font_size = prev.font_size.max(f.font_size);
+                    if gap > 0.3 * font_size
+                        && !s.ends_with(' ')
+                        && !f.text.starts_with(' ')
+                    {
+                        s.push(' ');
+                    }
+                }
+                s.push_str(&f.text);
+            }
+            s.trim().to_string()
         })
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()

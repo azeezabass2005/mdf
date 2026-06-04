@@ -698,16 +698,23 @@ pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
     let page_width = page.width().value;
     let (fragments, structural_paths) = extract_fragments(page);
 
-    // Subsetted fonts emit one text object per glyph; merge into runs before
-    // table detection so each line isn't read as a row of single-glyph columns.
-    let merged_fragments: Vec<TextFragment> = group_into_lines(fragments, page_width)
-        .into_iter()
-        .flat_map(|line| line.fragments)
-        .collect();
+    let table_layout = super::table::find_grid_layout(&structural_paths);
 
-    let (remaining_fragments, table_blocks) =
-        super::table::detect_and_extract_tables(merged_fragments, &structural_paths);
-    let lines = group_into_lines(remaining_fragments, page_width);
+    let (in_table, mut body_fragments): (Vec<TextFragment>, Vec<TextFragment>) =
+        match &table_layout {
+            Some(layout) => fragments.into_iter().partition(|f| layout.contains(f)),
+            None => (Vec::new(), fragments),
+        };
+
+    let mut table_blocks: Vec<ContentBlock> = Vec::new();
+    if let Some(layout) = table_layout {
+        match super::table::extract_table(&in_table, &layout) {
+            Some(block) => table_blocks.push(block),
+            None => body_fragments.extend(in_table),
+        }
+    }
+
+    let lines = group_into_lines(body_fragments, page_width);
     let mut all_blocks = merge_into_blocks(lines);
     all_blocks.extend(table_blocks);
     all_blocks.extend(extract_images(page));
