@@ -699,6 +699,7 @@ pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
     let (fragments, structural_paths) = extract_fragments(page);
 
     let table_layout = super::table::find_grid_layout(&structural_paths);
+    let table_bbox = table_layout.as_ref().map(|l| l.bbox());
 
     let (in_table, mut body_fragments): (Vec<TextFragment>, Vec<TextFragment>) =
         match &table_layout {
@@ -714,9 +715,31 @@ pub fn reconstruct_page(page: &PdfPage) -> Vec<ContentBlock> {
         }
     }
 
+    let diagram_regions = super::diagram::detect_diagram_regions(&structural_paths, table_bbox);
+    let mut diagram_blocks: Vec<ContentBlock> = Vec::new();
+    if !diagram_regions.is_empty() {
+        let data_uris = super::diagram::rasterize_regions(page, &diagram_regions, 150.0);
+        for ((l, t, r, b), data_uri) in diagram_regions.iter().zip(data_uris.iter()) {
+            let Some(uri) = data_uri else { continue };
+            diagram_blocks.push(ContentBlock::Image(Image {
+                data_uri: uri.clone(),
+                width_pt: r - l,
+                height_pt: t - b,
+                y_position: *t,
+            }));
+            let (rl, rt, rr, rb) = (*l, *t, *r, *b);
+            body_fragments.retain(|f| {
+                let cx = (f.left + f.right) / 2.0;
+                let cy = (f.top + f.bottom) / 2.0;
+                !(cx >= rl && cx <= rr && cy >= rb && cy <= rt)
+            });
+        }
+    }
+
     let lines = group_into_lines(body_fragments, page_width);
     let mut all_blocks = merge_into_blocks(lines);
     all_blocks.extend(table_blocks);
+    all_blocks.extend(diagram_blocks);
     all_blocks.extend(extract_images(page));
     all_blocks.sort_by(|a, b| {
         b.y_position()

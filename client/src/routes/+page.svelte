@@ -131,7 +131,7 @@
     </div>
 
     <div class="relative z-10 grid grid-cols-1 lg:grid-cols-12 gap-12 w-full max-w-none items-center mt-12 md:mt-16">
-      
+
       <div class="lg:col-span-7 flex flex-col justify-center">
         <h1 class="text-[clamp(4rem,10vw,12rem)] leading-[0.8] tracking-tighter uppercase font-medium">
           <span class="block overflow-hidden pb-2"><span class="block animate-slide-up">Liberate</span></span>
@@ -148,7 +148,7 @@
 
       <div class="lg:col-span-5 aspect-square max-h-[500px] lg:max-h-none lg:aspect-auto lg:h-[400px] w-full mt-12 lg:mt-0 relative group perspective-1000">
         <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div 
+        <div
           class="absolute inset-0 w-full h-full flex flex-col justify-between border border-white/10 bg-white/[0.01] backdrop-blur-sm p-8 transition-all duration-700 ease-[cubic-bezier(0.16,1,0.3,1)]
             {isDragging ? 'border-white/50 bg-white/5 scale-[0.98]' : 'hover:bg-white/[0.03] hover:border-white/20 hover:scale-[1.02]'}
             overflow-hidden group"
@@ -174,7 +174,7 @@
               {#if uploadError}
                  <p class="text-red-500 text-xs tracking-widest uppercase font-bold mb-4">{uploadError}</p>
               {/if}
-              <button 
+              <button
                 class="relative cursor-pointer w-full overflow-hidden bg-white text-black py-5 px-6 group/btn {isUploading ? 'opacity-50 pointer-events-none' : ''}"
                 onclick={handleUpload}
               >
@@ -202,9 +202,9 @@
                   <span class="relative uppercase tracking-widest text-xs font-bold pb-2 cursor-pointer transition-colors hover:text-white" onclick={triggerFileInput}>
                     Select via Dialog
                   </span>
-                  <input 
+                  <input
                     bind:this={fileInput}
-                    type="file" 
+                    type="file"
                     accept="application/pdf"
                     class="hidden"
                     onchange={handleFileInput}

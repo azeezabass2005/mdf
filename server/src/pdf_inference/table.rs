@@ -43,6 +43,15 @@ impl GridLayout {
     pub fn contains(&self, frag: &TextFragment) -> bool {
         self.region.contains_center(frag)
     }
+
+    pub fn bbox(&self) -> (f32, f32, f32, f32) {
+        (
+            self.region.left,
+            self.region.top,
+            self.region.right,
+            self.region.bottom,
+        )
+    }
 }
 
 pub fn extract_table(
@@ -80,20 +89,41 @@ pub fn find_grid_layout(paths: &[(f32, f32, f32, f32)]) -> Option<GridLayout> {
 
     let v_y_min = v_lines.iter().map(|r| r.bottom).fold(f32::MAX, f32::min);
     let v_y_max = v_lines.iter().map(|r| r.top).fold(f32::MIN, f32::max);
+    let v_x_min = v_lines.iter().map(|r| r.left).fold(f32::MAX, f32::min);
+    let v_x_max = v_lines.iter().map(|r| r.right).fold(f32::MIN, f32::max);
+    let extent_w = v_x_max - v_x_min;
+    let extent_h = v_y_max - v_y_min;
 
-    let mut v_xs: Vec<f32> = v_lines.iter().map(|r| (r.left + r.right) / 2.0).collect();
+    if extent_w <= 0.0 || extent_h <= 0.0 {
+        return None;
+    }
+
+    let span_ratio = 0.7;
+
+    let spanning_v: Vec<&Rect> = v_lines
+        .iter()
+        .filter(|r| r.height() >= extent_h * span_ratio)
+        .collect();
+
+    let spanning_h: Vec<&Rect> = h_lines
+        .iter()
+        .filter(|r| {
+            let y_mid = (r.top + r.bottom) / 2.0;
+            y_mid >= v_y_min - 1.0
+                && y_mid <= v_y_max + 1.0
+                && r.width() >= extent_w * span_ratio
+        })
+        .collect();
+
+    let mut v_xs: Vec<f32> = spanning_v.iter().map(|r| (r.left + r.right) / 2.0).collect();
     v_xs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
     v_xs.dedup_by(|a, b| (*b - *a).abs() < 3.0);
 
-    let mut h_ys: Vec<f32> = h_lines
-        .iter()
-        .map(|r| (r.top + r.bottom) / 2.0)
-        .filter(|&y| y >= v_y_min - 1.0 && y <= v_y_max + 1.0)
-        .collect();
+    let mut h_ys: Vec<f32> = spanning_h.iter().map(|r| (r.top + r.bottom) / 2.0).collect();
     h_ys.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
     h_ys.dedup_by(|a, b| (*b - *a).abs() < 3.0);
 
-    if v_xs.len() < 2 || h_ys.len() < 2 {
+    if v_xs.len() < 3 || h_ys.len() < 3 {
         return None;
     }
 

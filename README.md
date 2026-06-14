@@ -42,4 +42,23 @@ bun run dev
 
 ## Status
 
-Work in progress.
+Experimental.
+
+PDFs are a mess. The format lets you draw anything anywhere, so two documents that look identical on screen can have wildly different internal structures. That makes a universal parser more of a research problem than a weekend project, and I'm not pretending to have solved it.
+
+Here's what currently works reasonably well:
+
+- Text-heavy documents with a single column
+- Headings, paragraphs, bold and italic
+- Tables that are drawn with visible borders
+- Diagrams (rendered as images so the content stays intact)
+
+Here's what doesn't work well, or at all:
+
+- Scanned PDFs (no OCR yet)
+- Multi-column layouts get messy
+- Tables without ruled lines are ignored
+- Math, equations, and footnotes are not handled specially
+- Some fonts confuse the extractor and produce garbled spacing
+
+I might come back to it. For now I'm calling it done as a v0.1 and moving on to other things.

@@ -5,6 +5,7 @@ use std::sync::OnceLock;
 use crate::pdf_inference::reconstruct::{ContentBlock, assign_heading_levels};
 use pdfium_render::prelude::*;
 
+pub mod diagram;
 pub mod reconstruct;
 pub mod table;
 
